@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRM · Лиды</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F4F5F8;
+    --surface:#FFFFFF;
+    --surface-2:#FAFBFC;
+    --border:#ECEEF1;
+    --border-strong:#E1E4E9;
+    --text:#161A23;
+    --text-2:#6B7280;
+    --text-3:#9AA1AD;
+    --primary:#2F6BFF;
+    --primary-soft:#EAF1FF;
+    --primary-hover:#1F57E6;
+    --green:#16A34A;
+    --green-soft:#E7F6EC;
+    --amber:#D9870B;
+    --amber-soft:#FBF1DC;
+    --red:#DC2626;
+    --red-soft:#FCE9E9;
+    --purple:#7C5CFC;
+    --purple-soft:#EFEBFE;
+    --teal:#0E9F98;
+    --teal-soft:#E1F4F2;
+    --slate-soft:#EEF1F5;
+
+    --col-new:#2F6BFF;
+    --col-qual:#7C5CFC;
+    --col-dist:#D9870B;
+    --col-conv:#16A34A;
+    --col-rej:#9AA4B2;
+
+    --m-call:#2F6BFF;
+    --m-wa:#25D366;
+    --m-viber:#7360F2;
+    --m-tg:#28A8E8;
+    --m-mail:#7A828F;
+
+    --shadow-sm:0 1px 2px rgba(16,24,40,.05);
+    --shadow:0 1px 2px rgba(16,24,40,.04),0 4px 10px rgba(16,24,40,.05);
+    --shadow-pop:0 12px 32px rgba(16,24,40,.16),0 4px 8px rgba(16,24,40,.08);
+    --radius:14px;
+    --radius-md:11px;
+    --radius-sm:8px;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Manrope',system-ui,-apple-system,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    font-size:14px;
+    line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--primary-soft)}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#D6DAE0;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:#BFC5CE;background-clip:padding-box}
+
+  .app{
+    display:grid;
+    grid-template-columns:236px minmax(0,1fr) 312px;
+    grid-template-rows:64px minmax(0,1fr);
+    height:100vh;
+  }
+
+  /* ============ SIDEBAR ============ */
+  .sidebar{
+    grid-row:1 / 3;grid-column:1;
+    background:var(--surface);
+    border-right:1px solid var(--border);
+    display:flex;flex-direction:column;
+    overflow-y:auto;
+  }
+  .brand{
+    display:flex;align-items:center;gap:10px;
+    padding:18px 20px 16px;
+  }
+  .brand .logo{
+    width:34px;height:34px;border-radius:9px;
+    background:linear-gradient(135deg,#3D7BFF,#2F6BFF);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 10px rgba(47,107,255,.3);
+  }
+  .brand .logo svg{width:19px;height:19px;color:#fff}
+  .brand .name{font-weight:800;font-size:18px;letter-spacing:.3px}
+
+  .nav{padding:6px 12px 18px}
+  .nav-label{
+    font-size:11px;font-weight:700;color:var(--text-3);
+    letter-spacing:.7px;padding:14px 10px 8px;
+  }
+  .nav-item{
+    display:flex;align-items:center;gap:11px;
+    padding:9px 11px;border-radius:9px;
+    color:var(--text-2);font-weight:600;font-size:13.5px;
+    cursor:pointer;user-select:none;
+    transition:background .12s,color .12s;
+    position:relative;
+  }
+  .nav-item svg{width:18px;height:18px;flex-shrink:0;stroke-width:2}
+  .nav-item:hover{background:var(--surface-2);color:var(--text)}
+  .nav-item.active{background:var(--primary-soft);color:var(--primary)}
+  .nav-item.active svg{color:var(--primary)}
+  .subnav{margin:2px 0 4px}
+  .subnav .sub{
+    display:block;padding:7px 11px 7px 41px;
+    font-size:13px;font-weight:600;color:var(--text-2);
+    border-radius:8px;cursor:pointer;transition:.12s;
+  }
+  .subnav .sub:hover{background:var(--surface-2);color:var(--text)}
+  .subnav .sub.active{color:var(--primary);background:var(--primary-soft)}
+
+  .user{
+    margin-top:auto;border-top:1px solid var(--border);
+    padding:13px 16px;display:flex;align-items:center;gap:11px;cursor:pointer;
+  }
+  .user .av{
+    width:38px;height:38px;border-radius:10px;flex-shrink:0;
+    background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:14px;
+  }
+  .user .meta{flex:1;min-width:0}
+  .user .meta b{display:block;font-size:13.5px;font-weight:700}
+  .user .meta span{font-size:12px;color:var(--text-3)}
+  .user .chev{color:var(--text-3)}
+
+  /* ============ TOPBAR ============ */
+  .topbar{
+    grid-row:1;grid-column:2 / 4;
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 26px;
+  }
+  .crumb{font-size:20px;font-weight:800;display:flex;align-items:center;gap:9px}
+  .crumb .dim{color:var(--text-3)}
+  .crumb .sep{color:var(--text-3);font-weight:600}
+  .top-actions{display:flex;align-items:center;gap:6px}
+  .icon-btn{
+    width:40px;height:40px;border-radius:10px;border:none;background:transparent;
+    color:var(--text-2);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;position:relative;transition:.12s;
+  }
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  .icon-btn svg{width:20px;height:20px;stroke-width:2}
+  .badge-dot{
+    position:absolute;top:6px;right:7px;min-width:17px;height:17px;padding:0 4px;
+    background:var(--red);color:#fff;border-radius:9px;font-size:10.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;border:2px solid var(--surface);
+  }
+  .top-av{
+    width:38px;height:38px;border-radius:10px;margin-left:8px;
+    background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;
+  }
+
+  /* ============ MAIN ============ */
+  .main{grid-row:2;grid-column:2;overflow-y:auto;padding:20px 26px 32px}
+
+  .actbar{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+  .search{
+    flex:0 1 340px;position:relative;
+  }
+  .search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:17px;height:17px;color:var(--text-3)}
+  .search input{
+    width:100%;height:42px;border:1px solid var(--border-strong);border-radius:11px;
+    background:var(--surface);padding:0 14px 0 38px;font:inherit;font-size:13.5px;color:var(--text);
+    transition:.14s;
+  }
+  .search input::placeholder{color:var(--text-3)}
+  .search input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+  .btn{
+    height:42px;border-radius:11px;border:1px solid var(--border-strong);background:var(--surface);
+    color:var(--text);font:inherit;font-weight:600;font-size:13.5px;padding:0 15px;
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;transition:.14s;white-space:nowrap;
+  }
+  .btn svg{width:16px;height:16px;stroke-width:2}
+  .btn:hover{background:var(--surface-2);border-color:#D2D7DE}
+  .btn-primary{
+    background:var(--primary);border-color:var(--primary);color:#fff;margin-left:auto;
+    box-shadow:0 4px 12px rgba(47,107,255,.28);
+  }
+  .btn-primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+
+  /* KPI */
+  .sec-title{font-size:14px;font-weight:800;margin-bottom:12px;letter-spacing:.1px}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:22px}
+  .kpi{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:15px 16px 14px;box-shadow:var(--shadow-sm);
+  }
+  .kpi-head{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .kpi-ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .kpi-ic svg{width:18px;height:18px;stroke-width:2}
+  .kpi-ic.blue{background:var(--primary-soft);color:var(--primary)}
+  .kpi-ic.green{background:var(--green-soft);color:var(--green)}
+  .kpi-ic.purple{background:var(--purple-soft);color:var(--purple)}
+  .kpi-ic.teal{background:var(--teal-soft);color:var(--teal)}
+  .kpi-ic.red{background:var(--red-soft);color:var(--red)}
+  .kpi-label{font-size:12.5px;color:var(--text-2);font-weight:600;line-height:1.25}
+  .kpi-val{font-size:23px;font-weight:800;letter-spacing:-.3px}
+  .kpi-val .of{font-size:14px;color:var(--text-3);font-weight:700}
+  .kpi-bar{height:6px;background:#EEF0F3;border-radius:6px;margin-top:11px;overflow:hidden}
+  .kpi-bar i{display:block;height:100%;border-radius:6px}
+  .kpi-bar i.blue{background:var(--primary)}
+  .kpi-bar i.green{background:var(--green)}
+  .kpi-bar i.purple{background:var(--purple)}
+  .kpi-bar i.red{background:var(--red)}
+  .kpi-foot{font-size:11.5px;color:var(--text-3);margin-top:8px;font-weight:600}
+  .kpi-foot.warn{color:var(--red)}
+
+  .board-toolbar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:13px}
+  .seg{display:inline-flex;background:var(--surface);border:1px solid var(--border-strong);border-radius:9px;overflow:hidden}
+  .seg button{border:none;background:transparent;padding:8px 10px;color:var(--text-3);cursor:pointer;display:flex;align-items:center}
+  .seg button svg{width:17px;height:17px}
+  .seg button.on{background:var(--primary-soft);color:var(--primary)}
+  .more-btn{width:38px;height:36px;border:1px solid var(--border-strong);background:var(--surface);border-radius:9px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .more-btn svg{width:18px;height:18px}
+
+  /* ============ KANBAN ============ */
+  .board{display:grid;grid-template-columns:repeat(5,minmax(252px,1fr));gap:14px;align-items:start}
+  .col{background:transparent;display:flex;flex-direction:column;min-height:120px}
+  .col-head{
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:13px 14px 12px;position:relative;overflow:hidden;margin-bottom:11px;
+    box-shadow:var(--shadow-sm);
+  }
+  .col-head::before{content:"";position:absolute;top:0;left:0;right:0;height:4px}
+  .col.c-new   .col-head::before{background:var(--col-new)}
+  .col.c-qual  .col-head::before{background:var(--col-qual)}
+  .col.c-dist  .col-head::before{background:var(--col-dist)}
+  .col.c-conv  .col-head::before{background:var(--col-conv)}
+  .col.c-rej   .col-head::before{background:var(--col-rej)}
+  .col-title{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14.5px;margin-bottom:5px}
+  .dotc{width:8px;height:8px;border-radius:50%}
+  .col.c-new   .dotc{background:var(--col-new)}
+  .col.c-qual  .dotc{background:var(--col-qual)}
+  .col.c-dist  .dotc{background:var(--col-dist)}
+  .col.c-conv  .dotc{background:var(--col-conv)}
+  .col.c-rej   .dotc{background:var(--col-rej)}
+  .col-sub{font-size:12.5px;color:var(--text-2);font-weight:600}
+  .col-sub b{color:var(--text);font-weight:700}
+
+  .col-body{display:flex;flex-direction:column;gap:11px;min-height:60px;padding:2px;border-radius:12px;transition:background .12s}
+  .col-body.drop{background:var(--primary-soft);outline:2px dashed #B7CBFF;outline-offset:-2px}
+
+  /* CARD */
+  .card{
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:13px 13px 11px;box-shadow:var(--shadow-sm);cursor:grab;
+    transition:box-shadow .14s,transform .04s,border-color .14s;position:relative;
+  }
+  .card:hover{box-shadow:var(--shadow);border-color:#DCE0E6}
+  .card:active{cursor:grabbing}
+  .card.dragging{opacity:.5}
+  .card.prio::after{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:var(--red)}
+
+  .card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .lead-no{font-size:11.5px;color:var(--text-3);font-weight:700;letter-spacing:.2px}
+  .card-top-r{display:flex;align-items:center;gap:6px}
+  .pill{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:7px;letter-spacing:.2px;white-space:nowrap}
+  .pill.high{background:var(--red-soft);color:var(--red)}
+  .pill.mid{background:var(--amber-soft);color:var(--amber)}
+  .pill.low{background:var(--slate-soft);color:var(--text-2)}
+  .star{color:#D2D7DE;width:16px;height:16px;cursor:pointer}
+  .star.on{color:#F5B301}
+  .kebab{color:var(--text-3);width:16px;height:16px;cursor:pointer}
+
+  .chan{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--text-2);margin-bottom:7px}
+  .chan .ci{width:18px;height:18px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .chan .ci svg{width:11px;height:11px;color:#fff}
+  .ci.legat{background:#7C5CFC}
+  .ci.mail{background:#7A828F}
+  .ci.call{background:#2F6BFF}
+  .ci.tg{background:#28A8E8}
+  .ci.site{background:#0E9F98}
+  .ci.ref{background:#D9870B}
+
+  .co-name{font-weight:700;font-size:14.5px;line-height:1.25;margin-bottom:3px}
+  .co-name .a-mark{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:5px;background:var(--green-soft);color:var(--green);font-size:10px;font-weight:800;margin-left:5px;vertical-align:1px}
+  .co-int{font-size:12.5px;color:var(--text-2);margin-bottom:9px}
+
+  .row-meta{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);margin-bottom:6px}
+  .row-meta svg{width:13px;height:13px;color:var(--text-3);flex-shrink:0}
+  .amt{font-weight:800;font-size:14.5px;color:var(--text);margin-bottom:8px}
+  .amt small{font-size:11px;color:var(--text-3);font-weight:600;margin-left:4px}
+
+  .next{font-size:12px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 9px;margin-bottom:9px}
+  .next b{color:var(--text);font-weight:700}
+  .next.sla-bad{background:var(--red-soft);border-color:#F6D5D5;color:var(--red)}
+  .next.sla-bad b{color:var(--red)}
+  .next.done{background:var(--green-soft);border-color:#CFEBD8;color:#147A38}
+  .next.done b{color:#147A38}
+
+  .owner{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);margin-bottom:10px;font-weight:600}
+  .owner .oa{width:20px;height:20px;border-radius:6px;background:#E7EBF1;color:#5A6473;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:800}
+  .owner .date{margin-left:auto;color:var(--text-3);font-weight:600}
+  .owner.none .oa{background:#FBF1DC;color:#B5760A}
+
+  .act-btns{display:flex;gap:7px;margin-bottom:9px}
+  .mini{
+    flex:1;height:31px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);
+    color:var(--text);font:inherit;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;transition:.12s;
+  }
+  .mini svg{width:13px;height:13px}
+  .mini:hover{background:var(--surface-2);border-color:#D2D7DE}
+  .mini.accent{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 3px 8px rgba(47,107,255,.25)}
+  .mini.accent:hover{background:var(--primary-hover)}
+  .mini.ok{background:var(--green);border-color:var(--green);color:#fff}
+  .mini.ok:hover{background:#138a3f}
+  .mini.ghost{flex:0 0 auto;width:34px}
+
+  .msgs{display:flex;gap:9px;align-items:center;padding-top:9px;border-top:1px solid var(--border)}
+  .mbtn{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .1s,filter .12s;flex-shrink:0}
+  .mbtn:hover{transform:translateY(-1px);filter:brightness(1.06)}
+  .mbtn svg{width:15px;height:15px;color:#fff}
+  .mbtn.call{background:var(--m-call)}
+  .mbtn.wa{background:var(--m-wa)}
+  .mbtn.viber{background:var(--m-viber)}
+  .mbtn.tg{background:var(--m-tg)}
+  .mbtn.mail{background:var(--m-mail)}
+
+  .add-card{
+    border:1px dashed var(--border-strong);border-radius:10px;background:transparent;
+    color:var(--text-2);font:inherit;font-weight:700;font-size:12.5px;padding:10px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:7px;transition:.12s;margin-top:2px;
+  }
+  .add-card svg{width:15px;height:15px}
+  .add-card:hover{background:var(--surface);border-color:var(--primary);color:var(--primary)}
+
+  /* SUMMARY */
+  .summary{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px 22px;margin-top:24px;box-shadow:var(--shadow-sm);
+  }
+  .sum-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .sum-head h3{font-size:15px;font-weight:800}
+  .sum-period{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text-2);font-weight:600}
+  .sum-period svg{width:15px;height:15px;color:var(--text-3)}
+  .sum-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+  .sum-cell{padding:4px 18px 4px 0;border-right:1px solid var(--border)}
+  .sum-cell:last-child{border-right:none}
+  .sum-cell .lab{font-size:12.5px;color:var(--text-2);font-weight:600;margin-bottom:7px}
+  .sum-cell .num{font-size:25px;font-weight:800;letter-spacing:-.4px}
+  .sum-cell .num small{font-size:13px;font-weight:700;color:var(--text-3)}
+  .delta{font-size:11.5px;font-weight:700;margin-top:6px;display:inline-flex;align-items:center;gap:3px}
+  .delta.up{color:var(--green)}
+  .delta.down{color:var(--red)}
+  .delta svg{width:12px;height:12px}
+
+  /* ============ RAIL ============ */
+  .rail{
+    grid-row:2;grid-column:3;overflow-y:auto;
+    background:var(--surface);border-left:1px solid var(--border);
+    padding:18px 16px 24px;display:flex;flex-direction:column;gap:20px;
+  }
+  .rail-block .rb-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .rail-block .rb-head h4{font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
+  .cnt{background:var(--red-soft);color:var(--red);font-size:11px;font-weight:800;border-radius:7px;padding:2px 7px}
+  .rb-add{width:28px;height:28px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .rb-add svg{width:15px;height:15px}
+
+  .attn{display:flex;flex-direction:column;gap:9px}
+  .attn-item{display:flex;gap:10px;padding:11px;border:1px solid #F1D9D9;background:#FEF6F6;border-radius:11px;cursor:pointer;transition:.12s}
+  .attn-item:hover{border-color:#EFC7C7;background:#FDF0F0}
+  .attn-item.amber{border-color:#F3E2C2;background:#FDF8EE}
+  .attn-item.amber:hover{border-color:#ECD3A4}
+  .attn-ic{width:30px;height:30px;border-radius:8px;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .attn-ic.amber{background:var(--amber)}
+  .attn-ic svg{width:16px;height:16px}
+  .attn-tx{flex:1;min-width:0}
+  .attn-tx b{display:block;font-size:13px;font-weight:700;margin-bottom:1px}
+  .attn-tx span{font-size:12px;color:var(--text-2);font-weight:600}
+  .attn-tx em{font-style:normal;color:var(--red);font-weight:700}
+  .attn-item.amber .attn-tx em{color:var(--amber)}
+
+  .chan-stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .chan-card{border:1px solid var(--border);border-radius:11px;padding:11px 12px;background:var(--surface-2)}
+  .chan-card .ch-top{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .chan-card .ci{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center}
+  .chan-card .ci svg{width:13px;height:13px;color:#fff}
+  .chan-card .ch-name{font-size:12px;font-weight:700;color:var(--text-2)}
+  .chan-card .ch-num{font-size:20px;font-weight:800}
+  .chan-card .ch-num small{font-size:11px;color:var(--green);font-weight:700;margin-left:5px}
+
+  .chat-list{display:flex;flex-direction:column;gap:3px}
+  .chat-item{display:flex;gap:11px;padding:10px 8px;border-radius:11px;cursor:pointer;transition:background .12s}
+  .chat-item:hover{background:var(--surface-2)}
+  .chat-av{width:38px;height:38px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px}
+  .chat-tx{flex:1;min-width:0}
+  .chat-tx .l1{display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .chat-tx .l1 b{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-tx .l1 .t{font-size:11px;color:var(--text-3);font-weight:600;flex-shrink:0}
+  .chat-tx .l2{font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .unread{background:var(--green);color:#fff;font-size:10.5px;font-weight:800;border-radius:9px;min-width:18px;height:18px;padding:0 5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:6px}
+
+  .rail-link{text-align:center;color:var(--primary);font-weight:700;font-size:13px;cursor:pointer;padding-top:4px}
+  .rail-link:hover{text-decoration:underline}
+
+  /* AI placeholder — visually separated future iteration */
+  .ai-future{
+    border:1px dashed #C9CFEC;border-radius:13px;padding:14px;
+    background:linear-gradient(180deg,#F8F9FF,#F4F6FE);position:relative;
+  }
+  .ai-future .ai-tag{
+    position:absolute;top:-9px;left:14px;background:#EBEFFF;border:1px solid #D2DBFF;color:#3F58D6;
+    font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:7px;letter-spacing:.3px;
+  }
+  .ai-future h5{font-size:13.5px;font-weight:800;color:#3F4A66;margin:4px 0 6px;display:flex;align-items:center;gap:7px}
+  .ai-future h5 svg{width:16px;height:16px;color:#5566C7}
+  .ai-future p{font-size:12px;color:#737E9A;line-height:1.5;margin-bottom:10px}
+  .ai-future .ai-list{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .ai-future .ai-list li{font-size:12px;color:#8089A0;display:flex;align-items:center;gap:8px}
+  .ai-future .ai-list li::before{content:"";width:5px;height:5px;border-radius:50%;background:#B9C0E0;flex-shrink:0}
+  .ai-future .ai-disabled{margin-top:11px;height:33px;border-radius:8px;border:1px solid #D2DBFF;background:#fff;color:#9098B5;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;gap:7px;cursor:not-allowed}
+  .ai-future .ai-disabled svg{width:14px;height:14px}
+
+  /* ============ MODAL ============ */
+  .overlay{position:fixed;inset:0;background:rgba(16,24,40,.45);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:80;padding:30px}
+  .overlay.open{display:flex}
+  .modal{background:var(--surface);border-radius:18px;width:520px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-pop);animation:pop .18s ease}
+  @keyframes pop{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+  .m-head{padding:20px 22px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+  .m-head .mh-l .mno{font-size:12px;color:var(--text-3);font-weight:700;margin-bottom:5px}
+  .m-head .mh-l h3{font-size:19px;font-weight:800;line-height:1.2}
+  .m-head .mh-l .sub{font-size:13px;color:var(--text-2);margin-top:3px;font-weight:600}
+  .m-close{width:34px;height:34px;border-radius:9px;border:none;background:var(--surface-2);color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .m-close:hover{background:#EEF0F3;color:var(--text)}
+  .m-close svg{width:18px;height:18px}
+  .m-body{padding:18px 22px 22px}
+  .m-sec{margin-bottom:20px}
+  .m-sec h6{font-size:11.5px;font-weight:800;color:var(--text-3);letter-spacing:.5px;margin-bottom:11px}
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
+  .kv .k{font-size:12px;color:var(--text-2);font-weight:600;margin-bottom:3px}
+  .kv .v{font-size:13.5px;font-weight:700}
+  .kv .v.green{color:var(--green)}
+  .tline{display:flex;flex-direction:column;gap:0}
+  .tl-item{display:flex;gap:12px;padding-bottom:14px;position:relative}
+  .tl-item:last-child{padding-bottom:0}
+  .tl-item::before{content:"";position:absolute;left:11px;top:24px;bottom:0;width:2px;background:var(--border)}
+  .tl-item:last-child::before{display:none}
+  .tl-dot{width:24px;height:24px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;z-index:1}
+  .tl-dot svg{width:13px;height:13px;color:#fff}
+  .tl-tx{flex:1}
+  .tl-tx b{font-size:13px;font-weight:700;display:block}
+  .tl-tx span{font-size:12px;color:var(--text-2);font-weight:600}
+  .tl-tx .ts{font-size:11px;color:var(--text-3);font-weight:600;margin-top:2px;display:block}
+  .m-foot{padding:16px 22px;border-top:1px solid var(--border);display:flex;gap:10px;position:sticky;bottom:0;background:var(--surface)}
+  .m-foot .btn{height:44px;flex:1;justify-content:center}
+
+  .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:#161A23;color:#fff;padding:12px 20px;border-radius:11px;font-weight:600;font-size:13.5px;box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:.25s;z-index:90;display:flex;align-items:center;gap:9px}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast svg{width:17px;height:17px;color:#5CE08A}
+
+  @media (max-width:1480px){
+    .kpis{grid-template-columns:repeat(3,1fr)}
+    .board{grid-auto-flow:column;grid-auto-columns:280px;grid-template-columns:none;overflow-x:auto;padding-bottom:8px}
+  }
+  @media (max-width:1180px){
+    .app{grid-template-columns:64px minmax(0,1fr)}
+    .rail,.topbar{grid-column:2}
+    .rail{display:none}
+    .brand .name,.nav-label,.nav-item span,.subnav,.user .meta,.user .chev{display:none}
+    .sidebar{align-items:center}
+    .nav-item{justify-content:center}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7L12 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 22V12M12 12l8.66-5M12 12L3.34 7" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></div>
+      <span class="name">ERP</span>
+    </div>
+    <nav class="nav">
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1V9.5z" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Главная</span></div>
+
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>CRM</span></div>
+      <div class="subnav">
+        <span class="sub">Продажи</span>
+        <span class="sub active">Лиды</span>
+        <span class="sub">Клиенты</span>
+        <span class="sub">Контакты</span>
+        <span class="sub">Сделки</span>
+      </div>
+
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 4h2l2.4 12.5a1 1 0 001 .8h9.2a1 1 0 001-.8L21 7H6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/></svg><span>Закупки</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21V8l6-3v3l6-3v4l6-2v14H3z" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Производство</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 16V8a2 2 0 00-1-1.7l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.7l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" stroke-linejoin="round"/><path d="M3.3 7L12 12l8.7-5M12 22V12" stroke-linejoin="round"/></svg><span>Склад</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M1 3h13v11H1zM14 7h4l3 3v4h-7" stroke-linejoin="round"/><circle cx="5.5" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/></svg><span>Логистика</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20" stroke-linecap="round"/></svg><span>Финансы</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 11l18-8-3 18-5-5-4 3v-5l9-8" stroke-linejoin="round" stroke-linecap="round"/></svg><span>Маркетинг</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.7 21a2 2 0 01-3.4 0" stroke-linecap="round"/></svg><span>Сервис и поддержка</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" stroke-linecap="round"/><path d="M16 4.5a3 3 0 010 6M21 20c0-2.5-1.4-4.3-3.5-5" stroke-linecap="round"/></svg><span>HR</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke-linecap="round"/></svg><span>Аналитика</span></div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 11-4 0v-.1A1.6 1.6 0 005 19.5l-.1.1A2 2 0 112 16.8l.1-.1A1.6 1.6 0 002 14.2H2a2 2 0 110-4h.1A1.6 1.6 0 003.5 7.5L3.4 7.4A2 2 0 116.2 4.6l.1.1A1.6 1.6 0 009 3.6V3a2 2 0 114 0v.1a1.6 1.6 0 002.7 1.1l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 001.1 2.7H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z" stroke-linejoin="round"/></svg><span>IT и настройки</span></div>
+    </nav>
+    <div class="user">
+      <div class="av">ИП</div>
+      <div class="meta"><b>Иван Петров</b><span>Администратор</span></div>
+      <svg class="chev" viewBox="0 0 24 24" width="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+  </aside>
+
+  <!-- ===================== TOPBAR ===================== -->
+  <header class="topbar">
+    <div class="crumb"><span class="dim">CRM</span><span class="sep">/</span><span>Лиды</span></div>
+    <div class="top-actions">
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.7 21a2 2 0 01-3.4 0" stroke-linecap="round"/></svg><span class="badge-dot">7</span></button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 8.5 8.5 0 01-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 013.6 11 8.5 8.5 0 0112 3a8.4 8.4 0 019 8.5z" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3" stroke-linecap="round"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg></button>
+      <div class="top-av">ИП</div>
+    </div>
+  </header>
+
+  <!-- ===================== MAIN ===================== -->
+  <main class="main">
+    <div class="actbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4" stroke-linecap="round"/></svg>
+        <input id="searchInput" placeholder="Поиск лидов…">
+      </div>
+      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z" stroke-linecap="round" stroke-linejoin="round"/></svg>Фильтры</button>
+      <button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M9 18h6" stroke-linecap="round"/></svg>Настроить воронку</button>
+      <button class="btn btn-primary" onclick="toast('Форма приёма лида откроется здесь')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>Принять лид</button>
+    </div>
+
+    <!-- KPI -->
+    <div class="sec-title">План на сегодня</div>
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-head">
+          <div class="kpi-ic blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="kpi-label">Новых лидов<br>за сегодня</div>
+        </div>
+        <div class="kpi-val">12</div>
+        <div class="kpi-foot">за вчера: 9</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-head">
+          <div class="kpi-ic purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg></div>
+          <div class="kpi-label">Принято<br>в работу</div>
+        </div>
+        <div class="kpi-val">28 <span class="of">/ 40</span></div>
+        <div class="kpi-bar"><i class="purple" style="width:70%"></i></div>
+        <div class="kpi-foot">70% обработано</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-head">
+          <div class="kpi-ic green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="kpi-label">Квалифицировано</div>
+        </div>
+        <div class="kpi-val">18 <span class="of">/ 25</span></div>
+        <div class="kpi-bar"><i class="green" style="width:72%"></i></div>
+        <div class="kpi-foot">72% выполнено</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-head">
+          <div class="kpi-ic blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="kpi-label">Передано<br>в сделки</div>
+        </div>
+        <div class="kpi-val">9 <span class="of">/ 15</span></div>
+        <div class="kpi-bar"><i class="blue" style="width:60%"></i></div>
+        <div class="kpi-foot">60% выполнено</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-head">
+          <div class="kpi-ic red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="kpi-label">Просрочено<br>по SLA приёма</div>
+        </div>
+        <div class="kpi-val" style="color:var(--red)">3</div>
+        <div class="kpi-foot warn">требуют реакции</div>
+      </div>
+    </div>
+
+    <div class="board-toolbar">
+      <div class="seg">
+        <button class="on" title="Канбан"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="10.5" y="3" width="6" height="13" rx="1.5"/><rect x="18" y="3" width="3" height="9" rx="1.5"/></svg></button>
+        <button title="Таблица"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14h18M9 4v16" stroke-linecap="round"/></svg></button>
+      </div>
+      <button class="more-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
+    </div>
+
+    <!-- KANBAN -->
+    <div class="board" id="board">
+
+      <!-- COL: Новые лиды -->
+      <div class="col c-new">
+        <div class="col-head">
+          <div class="col-title"><span class="dotc"></span>Новые лиды</div>
+          <div class="col-sub"><b>14</b> лидов · потенциал <b>312 500 BYN</b></div>
+        </div>
+        <div class="col-body" data-stage="new">
+
+          <div class="card prio" draggable="true" data-name="ОАО «Гомельстройматериалы»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0188</span>
+              <div class="card-top-r"><span class="pill high">Высокий</span><svg class="star" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.7 1.4 6.8L12 17.8 6 21.2l1.4-6.8L2.3 9.7l6.9-.7L12 2z"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci legat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6" stroke-linejoin="round"/></svg></span>Легат · тендер</div>
+            <div class="co-name">ОАО «Гомельстройматериалы»</div>
+            <div class="co-int">Стройматериалы · поставка по 44-ФЗ</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Гомель, РБ</div>
+            <div class="amt">≈ 120 000 BYN<small>потенциал</small></div>
+            <div class="next sla-bad"><b>SLA приёма истёк:</b> назначьте ответственного. Дедлайн тендера: 14.06.2026</div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Квалификация лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>Квалифицировать</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card prio" draggable="true" data-name="ООО «ПромСнаб»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0191</span>
+              <div class="card-top-r"><span class="pill high">Высокий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Email</div>
+            <div class="co-name">ООО «ПромСнаб»</div>
+            <div class="co-int">Металлопрокат · запрос КП на 12 позиций</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Минск, РБ</div>
+            <div class="amt">≈ 45 000 BYN<small>потенциал</small></div>
+            <div class="next"><b>Поступил:</b> сегодня 09:12 · письмо с тех. заданием во вложении</div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Квалификация лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>Квалифицировать</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn wa"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 00-8.5 15.2L2 22l4.9-1.3A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.1l-.3-.2-2.9.8.8-2.8-.2-.3A8 8 0 1112 20zm4.4-6c-.2-.1-1.4-.7-1.6-.8s-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a6.5 6.5 0 01-3.2-2.8c-.2-.4.2-.4.6-1.2a.4.4 0 000-.4l-.8-1.8c-.2-.5-.4-.4-.5-.4h-.5a.9.9 0 00-.7.3 2.8 2.8 0 00-.9 2.1 4.9 4.9 0 001 2.6 11 11 0 004.3 3.8c2 .8 2 .5 2.4.5a2.4 2.4 0 001.6-1.1 2 2 0 00.1-1.1c0-.1-.2-.2-.4-.3z"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ООО «ТехноЛайн»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0193</span>
+              <div class="card-top-r"><span class="pill mid">Средний</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span>Telegram</div>
+            <div class="co-name">ООО «ТехноЛайн»</div>
+            <div class="co-int">Электроинструмент · оптовая закупка</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Витебск, РБ</div>
+            <div class="amt">≈ 22 000 BYN<small>потенциал</small></div>
+            <div class="next"><b>Поступил:</b> сегодня 08:40 · написал в Telegram-бот</div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Квалификация лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>Квалифицировать</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span>
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ИП Ковальчук А.В.">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0195</span>
+              <div class="card-top-r"><span class="pill low">Низкий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>Входящий звонок</div>
+            <div class="co-name">ИП Ковальчук А.В.</div>
+            <div class="co-int">Крепёж и метизы · разовая закупка</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Брест, РБ</div>
+            <div class="amt">≈ 8 000 BYN<small>потенциал</small></div>
+            <div class="next"><b>Поступил:</b> вчера 16:25 · звонок 3 мин, запись прикреплена</div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Квалификация лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg>Квалифицировать</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn viber"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C7 2 3 5.5 3 10c0 2.4 1.2 4.6 3 6v4l3.4-2A11 11 0 0012 18c5 0 9-3.5 9-8s-4-8-9-8zm0 2c3.9 0 7 2.7 7 6s-3.1 6-7 6a9 9 0 01-2.4-.3l-.5-.1-1.6.9v-1.8l-.4-.3C5.1 13.3 5 11.7 5 10c0-3.3 3.1-6 7-6z"/></svg></span>
+            </div>
+          </div>
+
+          <button class="add-card" onclick="toast('Добавление лида вручную')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>Добавить лид</button>
+        </div>
+      </div>
+
+      <!-- COL: Квалификация -->
+      <div class="col c-qual">
+        <div class="col-head">
+          <div class="col-title"><span class="dotc"></span>Квалификация</div>
+          <div class="col-sub"><b>9</b> лидов · потенциал <b>198 000 BYN</b></div>
+        </div>
+        <div class="col-body" data-stage="qual">
+
+          <div class="card prio" draggable="true" data-name="ЗАО «Белтехмонтаж»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0179</span>
+              <div class="card-top-r"><span class="pill high">Высокий</span><svg class="star on" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.9 6.3 6.9.7-5.1 4.7 1.4 6.8L12 17.8 6 21.2l1.4-6.8L2.3 9.7l6.9-.7L12 2z"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci legat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6" stroke-linejoin="round"/></svg></span>Легат · тендер</div>
+            <div class="co-name">ЗАО «Белтехмонтаж»</div>
+            <div class="co-int">Трубопроводная арматура · 223-ФЗ</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Минск, РБ</div>
+            <div class="amt">≈ 85 000 BYN<small>потенциал</small></div>
+            <div class="next"><b>Проверка:</b> бюджет подтверждён · ЛПР — гл. инженер · УНП проверяется по ЕГР</div>
+            <div class="act-btns">
+              <button class="mini ok" onclick="event.stopPropagation();toast('Лид квалифицирован → распределение')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>Принять</button>
+              <button class="mini" onclick="event.stopPropagation();toast('Лид отклонён')">Отклонить</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ООО «СтройКомплект-Бел»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0182</span>
+              <div class="card-top-r"><span class="pill mid">Средний</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci site"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" stroke-linecap="round"/></svg></span>Заявка с сайта</div>
+            <div class="co-name">ООО «СтройКомплект-Бел»</div>
+            <div class="co-int">Метизы · регулярные поставки</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Могилёв, РБ</div>
+            <div class="amt">≈ 31 000 BYN<small>потенциал</small></div>
+            <div class="next"><b>Проверка:</b> ожидаем ответ по объёмам и периодичности</div>
+            <div class="act-btns">
+              <button class="mini ok" onclick="event.stopPropagation();toast('Лид квалифицирован → распределение')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>Принять</button>
+              <button class="mini" onclick="event.stopPropagation();toast('Лид отклонён')">Отклонить</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ТЧУП «Альфа-Инструмент»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0185</span>
+              <div class="card-top-r"><span class="pill low">Низкий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Email</div>
+            <div class="co-name">ТЧУП «Альфа-Инструмент»</div>
+            <div class="co-int">Электроинструмент · пробная партия</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Гродно, РБ</div>
+            <div class="amt">≈ 18 500 BYN<small>потенциал</small></div>
+            <div class="next"><b>Проверка:</b> уточняем платёжеспособность · нет истории закупок</div>
+            <div class="act-btns">
+              <button class="mini ok" onclick="event.stopPropagation();toast('Лид квалифицирован → распределение')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>Принять</button>
+              <button class="mini" onclick="event.stopPropagation();toast('Лид отклонён')">Отклонить</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <button class="add-card" onclick="toast('Добавление лида вручную')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>Добавить лид</button>
+        </div>
+      </div>
+
+      <!-- COL: Распределение -->
+      <div class="col c-dist">
+        <div class="col-head">
+          <div class="col-title"><span class="dotc"></span>Распределение</div>
+          <div class="col-sub"><b>6</b> лидов · потенциал <b>167 000 BYN</b></div>
+        </div>
+        <div class="col-body" data-stage="dist">
+
+          <div class="card prio" draggable="true" data-name="ОДО «Партнёр-Строй»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0171</span>
+              <div class="card-top-r"><span class="pill high">Высокий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci ref"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" stroke-linecap="round"/><path d="M17 11l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Рекомендация</div>
+            <div class="co-name">ОДО «Партнёр-Строй»<span class="a-mark" title="Клиент категории А">А</span></div>
+            <div class="co-int">Металлоконструкции · крупный проект</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Минск, РБ</div>
+            <div class="amt">≈ 67 000 BYN<small>потенциал</small></div>
+            <div class="owner"><span class="oa">ПП</span>Петров П.П.<span class="date">назначен</span></div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Создание сделки из лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>В сделку</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn wa"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 00-8.5 15.2L2 22l4.9-1.3A10 10 0 1012 2zm0 18a8 8 0 01-4.1-1.1l-.3-.2-2.9.8.8-2.8-.2-.3A8 8 0 1112 20zm4.4-6c-.2-.1-1.4-.7-1.6-.8s-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a6.5 6.5 0 01-3.2-2.8c-.2-.4.2-.4.6-1.2a.4.4 0 000-.4l-.8-1.8c-.2-.5-.4-.4-.5-.4h-.5a.9.9 0 00-.7.3 2.8 2.8 0 00-.9 2.1 4.9 4.9 0 001 2.6 11 11 0 004.3 3.8c2 .8 2 .5 2.4.5a2.4 2.4 0 001.6-1.1 2 2 0 00.1-1.1c0-.1-.2-.2-.4-.3z"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ООО «Регион-Снаб»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0174</span>
+              <div class="card-top-r"><span class="pill mid">Средний</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>Входящий звонок</div>
+            <div class="co-name">ООО «Регион-Снаб»</div>
+            <div class="co-int">Сортовой прокат · поставка в РФ</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Смоленск, РФ</div>
+            <div class="amt">≈ 54 000 BYN<small>потенциал</small></div>
+            <div class="owner"><span class="oa">ИИ</span>Иванов И.И.<span class="date">назначен</span></div>
+            <div class="act-btns">
+              <button class="mini accent" onclick="event.stopPropagation();toast('Создание сделки из лида')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>В сделку</button>
+            </div>
+            <div class="msgs">
+              <span class="mbtn call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span>
+              <span class="mbtn mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+          </div>
+
+          <button class="add-card" onclick="toast('Добавление лида вручную')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>Добавить лид</button>
+        </div>
+      </div>
+
+      <!-- COL: Конвертированы -->
+      <div class="col c-conv">
+        <div class="col-head">
+          <div class="col-title"><span class="dotc"></span>Конвертированы</div>
+          <div class="col-sub"><b>11</b> сделок · сумма <b>247 000 BYN</b></div>
+        </div>
+        <div class="col-body" data-stage="conv">
+
+          <div class="card" draggable="true" data-name="ООО «МеталлТорг-Бел»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0162</span>
+              <div class="card-top-r"><span class="pill high">Высокий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci legat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6" stroke-linejoin="round"/></svg></span>Легат · тендер</div>
+            <div class="co-name">ООО «МеталлТорг-Бел»<span class="a-mark" title="Клиент категории А">А</span></div>
+            <div class="co-int">Арматура А500С · поставка партией</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Минск, РБ</div>
+            <div class="amt">95 000 BYN</div>
+            <div class="next done"><b>Создана сделка:</b> № CRM-2026-0312 · стадия «Квалификация»</div>
+            <div class="owner"><span class="oa">ПП</span>Петров П.П.<span class="date">сегодня</span></div>
+            <div class="act-btns">
+              <button class="mini" onclick="event.stopPropagation();toast('Переход к сделке CRM-2026-0312')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round"/></svg>Открыть сделку</button>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ООО «БелПромТех»">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0166</span>
+              <div class="card-top-r"><span class="pill mid">Средний</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci site"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" stroke-linecap="round"/></svg></span>Заявка с сайта</div>
+            <div class="co-name">ООО «БелПромТех»</div>
+            <div class="co-int">Ручной инструмент · опт</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Минск, РБ</div>
+            <div class="amt">40 000 BYN</div>
+            <div class="next done"><b>Создана сделка:</b> № CRM-2026-0318 · стадия «Новая заявка»</div>
+            <div class="owner"><span class="oa">ИИ</span>Иванов И.И.<span class="date">вчера</span></div>
+            <div class="act-btns">
+              <button class="mini" onclick="event.stopPropagation();toast('Переход к сделке CRM-2026-0318')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round"/></svg>Открыть сделку</button>
+            </div>
+          </div>
+
+          <div class="card" draggable="true" data-name="ИП Сидорчук Д.А.">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0169</span>
+              <div class="card-top-r"><span class="pill low">Низкий</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Email</div>
+            <div class="co-name">ИП Сидорчук Д.А.</div>
+            <div class="co-int">Крепёж · разовый заказ</div>
+            <div class="row-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-5.2-7-11a7 7 0 0114 0c0 5.8-7 11-7 11z" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4"/></svg>Барановичи, РБ</div>
+            <div class="amt">12 000 BYN</div>
+            <div class="next done"><b>Создана сделка:</b> № CRM-2026-0315 · стадия «Новая заявка»</div>
+            <div class="owner"><span class="oa">СС</span>Сидоров С.С.<span class="date">вчера</span></div>
+            <div class="act-btns">
+              <button class="mini" onclick="event.stopPropagation();toast('Переход к сделке CRM-2026-0315')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8" stroke-linecap="round" stroke-linejoin="round"/></svg>Открыть сделку</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- COL: Отклонены -->
+      <div class="col c-rej">
+        <div class="col-head">
+          <div class="col-title"><span class="dotc"></span>Отклонены</div>
+          <div class="col-sub"><b>5</b> лидов · нецелевые / спам</div>
+        </div>
+        <div class="col-body" data-stage="rej">
+
+          <div class="card" draggable="true" data-name="Розничный запрос">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0158</span>
+              <div class="card-top-r"><span class="pill low">B2C</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span>Telegram</div>
+            <div class="co-name">Частное лицо</div>
+            <div class="co-int">1 шуруповёрт в розницу</div>
+            <div class="next"><b>Причина:</b> нецелевой — работаем только B2B (опт)</div>
+          </div>
+
+          <div class="card" draggable="true" data-name="Спам-обращение">
+            <div class="card-top">
+              <span class="lead-no">№ ЛИД-2026-0160</span>
+              <div class="card-top-r"><span class="pill low">Спам</span><svg class="kebab" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></div>
+            </div>
+            <div class="chan"><span class="ci mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Email</div>
+            <div class="co-name">Не указано</div>
+            <div class="co-int">Рекламная рассылка</div>
+            <div class="next"><b>Причина:</b> нет контактов и предмета запроса</div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <!-- SUMMARY -->
+    <section class="summary">
+      <div class="sum-head">
+        <h3>Итоги по воронке лидов</h3>
+        <div class="sum-period"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4" stroke-linecap="round"/></svg>01.06.2026 – 09.06.2026</div>
+      </div>
+      <div class="sum-grid">
+        <div class="sum-cell">
+          <div class="lab">Лидов в работе</div>
+          <div class="num">29</div>
+          <div class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>+14% к периоду</div>
+        </div>
+        <div class="sum-cell">
+          <div class="lab">Новых за период</div>
+          <div class="num">86</div>
+          <div class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>+9% к периоду</div>
+        </div>
+        <div class="sum-cell">
+          <div class="lab">Квалифицировано</div>
+          <div class="num">52</div>
+          <div class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>+11% к периоду</div>
+        </div>
+        <div class="sum-cell">
+          <div class="lab">Передано в сделки</div>
+          <div class="num">38</div>
+          <div class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>+7% к периоду</div>
+        </div>
+        <div class="sum-cell">
+          <div class="lab">Конверсия лид → сделка</div>
+          <div class="num">44.2<small>%</small></div>
+          <div class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 15l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>+2.6% к периоду</div>
+        </div>
+        <div class="sum-cell">
+          <div class="lab">Среднее время приёма</div>
+          <div class="num">2.4<small>ч</small></div>
+          <div class="delta down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>−0.5ч (быстрее)</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== RAIL ===================== -->
+  <aside class="rail">
+
+    <div class="rail-block">
+      <div class="rb-head"><h4>Требуют внимания <span class="cnt">3</span></h4></div>
+      <div class="attn">
+        <div class="attn-item" onclick="toast('Открыть просроченный лид')">
+          <div class="attn-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="attn-tx"><b>ОАО «Гомельстройматериалы»</b><span><em>SLA приёма истёк</em> · тендер до 14.06</span></div>
+        </div>
+        <div class="attn-item amber" onclick="toast('Открыть лид без ответственного')">
+          <div class="attn-ic amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9l-8 14A2 2 0 004 21h16a2 2 0 001.7-3l-8-14a2 2 0 00-3.4 0z" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="attn-tx"><b>2 лида без ответственного</b><span><em>назначьте менеджера</em> в течение 4 ч</span></div>
+        </div>
+        <div class="attn-item amber" onclick="toast('Открыть зависший лид')">
+          <div class="attn-ic amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></div>
+          <div class="attn-tx"><b>ИП Ковальчук А.В.</b><span><em>нет контакта 18 ч</em> после звонка</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail-block">
+      <div class="rb-head"><h4>Каналы за сегодня</h4></div>
+      <div class="chan-stats">
+        <div class="chan-card">
+          <div class="ch-top"><span class="ci legat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6" stroke-linejoin="round"/></svg></span><span class="ch-name">Легат</span></div>
+          <div class="ch-num">4 <small>+2</small></div>
+        </div>
+        <div class="chan-card">
+          <div class="ch-top"><span class="ci mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M3 6l9 7 9-7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="ch-name">Email</span></div>
+          <div class="ch-num">3 <small>+1</small></div>
+        </div>
+        <div class="chan-card">
+          <div class="ch-top"><span class="ci call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></span><span class="ch-name">Звонки</span></div>
+          <div class="ch-num">3</div>
+        </div>
+        <div class="chan-card">
+          <div class="ch-top"><span class="ci tg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4.3L2.5 11.6c-1 .4-1 1.7.1 2l4.8 1.5 1.8 5.6c.3.9 1.4 1 2 .3l2.6-2.7 4.9 3.6c.7.5 1.7.1 1.9-.8l3.3-15c.2-1-.8-1.7-1.7-1.3z"/></svg></span><span class="ch-name">Telegram</span></div>
+          <div class="ch-num">2</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail-block">
+      <div class="rb-head"><h4>Сообщения по лидам</h4><button class="rb-add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button></div>
+      <div class="chat-list">
+        <div class="chat-item">
+          <div class="chat-av" style="background:#5B8DEF">ГС</div>
+          <div class="chat-tx"><div class="l1"><b>Гомельстройматериалы</b><span class="t">10:24</span></div><div class="l2">Запрос по тендеру: вышлите КП до конца дня</div></div>
+          <span class="unread">2</span>
+        </div>
+        <div class="chat-item">
+          <div class="chat-av" style="background:#7C5CFC">ПС</div>
+          <div class="chat-tx"><div class="l1"><b>ООО «ПромСнаб»</b><span class="t">09:58</span></div><div class="l2">Прикрепил ТЗ во вложении к письму</div></div>
+          <span class="unread">1</span>
+        </div>
+        <div class="chat-item">
+          <div class="chat-av" style="background:#0E9F98">СК</div>
+          <div class="chat-tx"><div class="l1"><b>СтройКомплект-Бел</b><span class="t">09:31</span></div><div class="l2">Нужны метизы регулярно, обсудим объёмы?</div></div>
+        </div>
+        <div class="chat-item">
+          <div class="chat-av" style="background:#E0892B">ТЛ</div>
+          <div class="chat-tx"><div class="l1"><b>ООО «ТехноЛайн»</b><span class="t">08:40</span></div><div class="l2">Здравствуйте, интересует электроинструмент</div></div>
+        </div>
+        <div class="chat-item">
+          <div class="chat-av" style="background:#64748B">АИ</div>
+          <div class="chat-tx"><div class="l1"><b>Альфа-Инструмент</b><span class="t">Вчера</span></div><div class="l2">Готовы взять пробную партию</div></div>
+        </div>
+      </div>
+      <div class="rail-link" onclick="toast('Все сообщения по лидам')">Все сообщения →</div>
+    </div>
+
+    <!-- AI placeholder — future iteration, visually separated -->
+    <div class="ai-future">
+      <span class="ai-tag">ИТЕРАЦИЯ 1 · ИИ</span>
+      <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 4.6L18.5 9l-3.5 3.1.9 4.9L12 14.6 8.1 17l.9-4.9L5.5 9l4.6-1.4L12 3z" stroke-linejoin="round"/></svg>ИИ-квалификация лидов</h5>
+      <p>Появится на следующем этапе. Сейчас воронка работает на ручной квалификации.</p>
+      <ul class="ai-list">
+        <li>Авто-скоринг и приоритет лида</li>
+        <li>Распределение менеджеру по нагрузке</li>
+        <li>Подсказка следующего шага</li>
+        <li>Сводка обращения из всех каналов</li>
+      </ul>
+      <div class="ai-disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke-linecap="round"/></svg>Недоступно в прототипе</div>
+    </div>
+
+  </aside>
+</div>
+
+<!-- ===================== MODAL ===================== -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="m-head">
+      <div class="mh-l">
+        <div class="mno">№ ЛИД-2026-0179 · Легат · тендер</div>
+        <h3 id="mTitle">ЗАО «Белтехмонтаж»</h3>
+        <div class="sub">Трубопроводная арматура · 223-ФЗ</div>
+      </div>
+      <button class="m-close" onclick="closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></button>
+    </div>
+    <div class="m-body">
+      <div class="m-sec">
+        <h6>КОНТРАГЕНТ · ДАННЫЕ ЕГР</h6>
+        <div class="kv">
+          <div><div class="k">УНП</div><div class="v">190556784</div></div>
+          <div><div class="k">Статус в ЕГР</div><div class="v green">Действующий</div></div>
+          <div><div class="k">Директор</div><div class="v">Карпович В. Л.</div></div>
+          <div><div class="k">ОКЭД</div><div class="v">46.74 — оптовая торговля</div></div>
+          <div><div class="k">Регион</div><div class="v">г. Минск, РБ</div></div>
+          <div><div class="k">Проверка рисков</div><div class="v green">Судов и санкций нет</div></div>
+        </div>
+      </div>
+      <div class="m-sec">
+        <h6>КВАЛИФИКАЦИЯ</h6>
+        <div class="kv">
+          <div><div class="k">Потенциал сделки</div><div class="v">≈ 85 000 BYN</div></div>
+          <div><div class="k">Приоритет</div><div class="v">Высокий</div></div>
+          <div><div class="k">Бюджет</div><div class="v green">Подтверждён</div></div>
+          <div><div class="k">ЛПР</div><div class="v">Главный инженер</div></div>
+        </div>
+      </div>
+      <div class="m-sec">
+        <h6>ИСТОРИЯ ОБРАЩЕНИЯ</h6>
+        <div class="tline">
+          <div class="tl-item">
+            <div class="tl-dot" style="background:#7C5CFC"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 21V8l9-5 9 5v13" stroke-linejoin="round"/></svg></div>
+            <div class="tl-tx"><b>Лид поступил с площадки Легат</b><span>Закупка по 223-ФЗ, арматура трубопроводная</span><span class="ts">07.06.2026, 11:20</span></div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:#2F6BFF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.4 1.8.7 2.7a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.4-1.2a2 2 0 012.1-.4c.9.3 1.8.6 2.7.7a2 2 0 011.7 2z" stroke-linejoin="round"/></svg></div>
+            <div class="tl-tx"><b>Звонок: уточнение спецификации</b><span>Подтвердили объём и сроки поставки</span><span class="ts">07.06.2026, 14:05</span></div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot" style="background:#16A34A"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div class="tl-tx"><b>Проверка ЕГР пройдена</b><span>Контрагент действующий, рисков не выявлено</span><span class="ts">08.06.2026, 10:12</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="m-foot">
+      <button class="btn" onclick="toast('Лид отклонён');closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg>Отклонить</button>
+      <button class="btn btn-primary" style="margin-left:0" onclick="toast('Лид принят → распределение');closeModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>Квалифицировать и распределить</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="toastTxt"></span></div>
+
+<script>
+  /* ---------- toast ---------- */
+  let toastTimer;
+  function toast(msg){
+    const t=document.getElementById('toast');
+    document.getElementById('toastTxt').textContent=msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+  }
+
+  /* ---------- modal ---------- */
+  function openModal(name){
+    if(name) document.getElementById('mTitle').textContent=name;
+    document.getElementById('overlay').classList.add('open');
+  }
+  function closeModal(){document.getElementById('overlay').classList.remove('open');}
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+
+  /* open modal on card body click (ignore buttons/messengers/drag handles) */
+  document.querySelectorAll('.card').forEach(card=>{
+    card.addEventListener('click',e=>{
+      if(e.target.closest('.mini,.mbtn,.kebab,.star,.add-card')) return;
+      openModal(card.dataset.name);
+    });
+  });
+
+  /* ---------- star toggle ---------- */
+  document.querySelectorAll('.star').forEach(s=>{
+    s.addEventListener('click',e=>{e.stopPropagation();s.classList.toggle('on');});
+  });
+
+  /* ---------- drag & drop between stages ---------- */
+  let dragged=null;
+  document.querySelectorAll('.card').forEach(card=>{
+    card.addEventListener('dragstart',()=>{dragged=card;setTimeout(()=>card.classList.add('dragging'),0);});
+    card.addEventListener('dragend',()=>{dragged=null;card.classList.remove('dragging');recount();});
+  });
+  document.querySelectorAll('.col-body').forEach(body=>{
+    body.addEventListener('dragover',e=>{e.preventDefault();body.classList.add('drop');});
+    body.addEventListener('dragleave',()=>body.classList.remove('drop'));
+    body.addEventListener('drop',e=>{
+      e.preventDefault();
+      body.classList.remove('drop');
+      if(!dragged) return;
+      const addBtn=body.querySelector('.add-card');
+      if(addBtn) body.insertBefore(dragged,addBtn); else body.appendChild(dragged);
+    });
+  });
+
+  /* ---------- recount column headers ---------- */
+  const cols=[
+    {sel:'new',  label:'лидов', unit:'потенциал'},
+    {sel:'qual', label:'лидов', unit:'потенциал'},
+    {sel:'dist', label:'лидов', unit:'потенциал'},
+    {sel:'conv', label:'сделок',unit:'сумма'},
+    {sel:'rej',  label:'лидов', unit:null}
+  ];
+  function parseAmt(card){
+    const a=card.querySelector('.amt');
+    if(!a) return 0;
+    const m=a.textContent.replace(/[^\d]/g,'');
+    return m?parseInt(m,10):0;
+  }
+  function recount(){
+    document.querySelectorAll('.col').forEach(col=>{
+      const body=col.querySelector('.col-body');
+      const cards=body.querySelectorAll('.card');
+      const stage=body.dataset.stage;
+      const cfg=cols.find(c=>c.sel===stage);
+      let sum=0; cards.forEach(c=>sum+=parseAmt(c));
+      const subEl=col.querySelector('.col-sub');
+      if(stage==='rej'){
+        subEl.innerHTML='<b>'+cards.length+'</b> лидов · нецелевые / спам';
+      }else{
+        subEl.innerHTML='<b>'+cards.length+'</b> '+cfg.label+' · '+cfg.unit+' <b>'+sum.toLocaleString('ru-RU')+' BYN</b>';
+      }
+    });
+  }
+
+  /* ---------- live search filter ---------- */
+  document.getElementById('searchInput').addEventListener('input',e=>{
+    const q=e.target.value.trim().toLowerCase();
+    document.querySelectorAll('.card').forEach(card=>{
+      const txt=card.textContent.toLowerCase();
+      card.style.display=(!q||txt.includes(q))?'':'none';
+    });
+  });
+</script>
+</body>
+</html>
