@@ -68,11 +68,14 @@ async def on_call_logged(payload: dict, ctx) -> None:
             return  # известный контакт → обрабатывает sales (сделка/продавец)
         dup = (
             await ctx.session.execute(
-                select(Lead).where(Lead.phone.like(f"%{tail}"), Lead.status != "converted")
+                select(Lead).where(
+                    Lead.phone.like(f"%{tail}"),
+                    Lead.status.in_(("new", "qualified", "routed")),  # только ОТКРЫТЫЕ
+                )
             )
         ).scalars().first()
         if dup is not None:
-            return  # уже есть открытый лид с этого номера
+            return  # уже есть открытый лид с этого номера (терминальные converted/rejected — не помеха)
 
     agent = payload.get("agent_ext") or ""
     lead = Lead(
