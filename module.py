@@ -11,7 +11,11 @@ import logging
 from core.runtime.contract import ModuleContract, Widget
 from core.runtime.core import Core
 from modules.leads import routes
-from modules.leads.events import on_campaign_launched, on_deal_created_from_lead
+from modules.leads.events import (
+    on_call_logged,
+    on_campaign_launched,
+    on_deal_created_from_lead,
+)
 from modules.leads.permissions import PERMISSIONS, ROLES
 
 logger = logging.getLogger("aios.leads")
@@ -27,6 +31,7 @@ class LeadsModule(ModuleContract):
         # межмодульные связи через шину (§2.5): модуль не импортирует marketing/sales
         core.subscribe("marketing.campaign.launched", on_campaign_launched)  # кампания → лиды
         core.subscribe("sales.deal.created", on_deal_created_from_lead)  # сделка → ссылка у лида
+        core.subscribe("sales.call.logged", on_call_logged)  # входящий звонок неизвестного → лид
         core.declare_permissions(PERMISSIONS)
         for role in ROLES:
             core.declare_role(role)

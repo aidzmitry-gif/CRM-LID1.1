@@ -33,6 +33,64 @@ async def on_campaign_launched(payload: dict, ctx) -> None:
     logger.info("Leads: из кампании «%s» принято лидов: %d", name, count)
 
 
+async def on_call_logged(payload: dict, ctx) -> None:
+    """Входящий звонок с НЕИЗВЕСТНОГО номера → новый лид (sales → leads).
+
+    Телефония sales журналирует звонок и публикует ``sales.call.logged`` (несёт
+    ``agent_ext`` — кто поднял трубку). Известный звонящий (есть контакт в shared
+    kernel) обрабатывается продажами (резолв продавца/сделки, §2.4); неизвестный —
+    заводится лидом источника ``phone`` здесь, чтобы ни одно обращение не потерялось
+    (правило «обращение → запись + маршрутизация»). Дедуп: пока есть открытый лид с
+    этим номером, повторные звонки дубль не плодят.
+    """
+    if ctx is None or payload.get("direction") != "in":
+        return
+    phone = (payload.get("phone") or "").strip()
+    if not phone:
+        return
+
+    import re
+
+    from sqlalchemy import select
+
+    from core.domain.models import Contact
+    from modules.leads.models import Lead
+
+    tail = re.sub(r"\D", "", phone)[-9:]  # значащий хвост: контакты могут быть без кода страны
+    if tail:
+        # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс
+        known = (
+            await ctx.session.execute(
+                select(Contact).where(Contact.phone.isnot(None), Contact.phone.like(f"%{tail}"))
+            )
+        ).scalars().first()
+        if known is not None:
+            return  # известный контакт → обрабатывает sales (сделка/продавец)
+        dup = (
+            await ctx.session.execute(
+                select(Lead).where(Lead.phone.like(f"%{tail}"), Lead.status != "converted")
+            )
+        ).scalars().first()
+        if dup is not None:
+            return  # уже есть открытый лид с этого номера
+
+    agent = payload.get("agent_ext") or ""
+    lead = Lead(
+        source="phone",
+        phone=phone,
+        message=f"Входящий звонок (доб. {agent})" if agent else "Входящий звонок",
+        status="new",
+    )
+    ctx.session.add(lead)
+    await ctx.session.flush()
+    ctx.services.event_bus.emit(
+        ctx.session,
+        "leads.lead.received",
+        {"lead_id": lead.id, "source": "phone", "entity_ref": f"lead:{lead.id}"},
+    )
+    logger.info("Leads: входящий звонок с %s → лид %s", phone, lead.id)
+
+
 async def on_deal_created_from_lead(payload: dict, ctx) -> None:
     """Сделка создана из лида (sales → leads): проставить лиду ссылку на сделку.
 
