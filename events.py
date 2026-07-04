@@ -94,6 +94,43 @@ async def on_call_logged(payload: dict, ctx) -> None:
     logger.info("Leads: входящий звонок с %s → лид %s", phone, lead.id)
 
 
+async def on_intake_lead(payload: dict, ctx) -> None:
+    """Веб-форма/почта (integrations → leads): заявка становится лидом.
+
+    Публичные коннекторы (``/integrations/web/lead``, ``/integrations/email/inbound``)
+    сами лид не создают — публикуют ``intake.lead.received`` (модули не видят друг
+    друга напрямую, §2.4). Здесь заявка превращается в ``Lead`` со статусом ``new``
+    и лид входит в общую воронку приёма тем же событием, что и остальные каналы.
+    """
+    if ctx is None:
+        return
+    from modules.leads.leads import LEAD_SOURCES
+    from modules.leads.models import Lead
+
+    source = payload.get("source") or "site"
+    if source not in LEAD_SOURCES:
+        source = "site"
+    lead = Lead(
+        source=source,
+        name=(payload.get("name") or "").strip(),
+        company=(payload.get("company") or "").strip(),
+        phone=(payload.get("phone") or "").strip() or None,
+        email=(payload.get("email") or "").strip() or None,
+        region=(payload.get("region") or "").strip(),
+        product=(payload.get("product") or "").strip(),
+        message=(payload.get("message") or "").strip(),
+        status="new",
+    )
+    ctx.session.add(lead)
+    await ctx.session.flush()
+    ctx.services.event_bus.emit(
+        ctx.session,
+        "leads.lead.received",
+        {"lead_id": lead.id, "source": source, "entity_ref": f"lead:{lead.id}"},
+    )
+    logger.info("Leads: интейк (%s) → лид %s", source, lead.id)
+
+
 async def on_deal_created_from_lead(payload: dict, ctx) -> None:
     """Сделка создана из лида (sales → leads): проставить лиду ссылку на сделку.
 
