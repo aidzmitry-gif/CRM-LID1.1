@@ -3,10 +3,33 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import Base
+
+
+class LeadAttachment(Base):
+    """Вложение лида (скан тендерной заявки, файл из письма, ручная загрузка).
+
+    Метаданные — здесь; сами байты — на диске (``modules/leads/storage.py``,
+    ``save_attachment``/``read_attachment``), НЕ в БД: сканы/xlsx весят до
+    нескольких МБ, раздувать Postgres-строки не нужно (в отличие от логотипа
+    продавца в sales — тот маленький, хранится как data-URI прямо в колонке).
+    """
+
+    __tablename__ = "lead_attachment"
+    __table_args__ = {"schema": "leads"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.lead.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column()
+    # ручная загрузка спецом | email-вложение | скан с тендерной площадки
+    source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    storage_path: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Lead(Base):

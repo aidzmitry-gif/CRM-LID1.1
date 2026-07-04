@@ -1,7 +1,9 @@
 """Pydantic-схемы API модуля Leads (вход/выход), отдельно от ORM-моделей."""
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LeadCreate(BaseModel):
@@ -72,3 +74,26 @@ class LeadConvertOut(BaseModel):
     lead_id: int
     status: str
     deal_id: int | None = None
+
+
+class LeadAttachmentIn(BaseModel):
+    """Загрузка вложения лида. ``data_url`` — data-URI (``data:<mime>;base64,...``),
+    формируется на клиенте через FileReader (сервер multipart не парсит — см. storage.py)."""
+
+    filename: str = Field(min_length=1, max_length=255)
+    data_url: str = Field(min_length=1)
+    source: str = "manual"  # manual|email|tender
+
+
+class LeadAttachmentOut(BaseModel):
+    """Вложение лида в ответах API (без байтов — только метаданные)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    filename: str
+    content_type: str
+    size_bytes: int
+    source: str
+    created_at: datetime

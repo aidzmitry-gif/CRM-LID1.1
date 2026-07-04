@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,13 +15,21 @@ from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import lead_priority, route_lead, score_lead
-from modules.leads.models import Lead
+from modules.leads.models import Lead, LeadAttachment
 from modules.leads.schemas import (
+    LeadAttachmentIn,
+    LeadAttachmentOut,
     LeadConvertOut,
     LeadCreate,
     LeadOut,
     LeadQualifyOut,
     LeadRouteOut,
+)
+from modules.leads.storage import (
+    AttachmentRejected,
+    decode_data_url,
+    read_attachment,
+    save_attachment,
 )
 
 router = APIRouter(tags=["leads"])
@@ -219,3 +227,82 @@ async def convert_lead(
     )
     await session.commit()
     return LeadConvertOut(lead_id=lead.id, status=lead.status)
+
+
+@router.post("/{lead_id}/attachments", response_model=LeadAttachmentOut, status_code=201)
+async def upload_attachment(
+    lead_id: int,
+    payload: LeadAttachmentIn,
+    session: AsyncSession = Depends(get_session),
+):
+    """Загрузить вложение лида (скан заявки, файл письма) — data-URI с клиента.
+
+    Транспорт — тот же паттерн, что и логотип продавца в sales (клиент кодирует
+    файл через FileReader, сервер multipart не парсит — его в проекте нет).
+    В отличие от логотипа байты не идут в БД: пишутся на диск (``storage.py``,
+    граница доверия — тип/размер валидируются там), в БД — только метаданные.
+    """
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    try:
+        content_type, data = decode_data_url(payload.data_url)
+        storage_path, size = save_attachment(lead_id, payload.filename, content_type, data)
+    except AttachmentRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    attachment = LeadAttachment(
+        lead_id=lead_id,
+        filename=payload.filename,
+        content_type=content_type,
+        size_bytes=size,
+        source=payload.source,
+        storage_path=storage_path,
+    )
+    session.add(attachment)
+    await session.commit()
+    await session.refresh(attachment)
+    return attachment
+
+
+@router.get("/{lead_id}/attachments", response_model=list[LeadAttachmentOut])
+async def list_attachments(lead_id: int, session: AsyncSession = Depends(get_session)):
+    """Список вложений лида (без байтов — метаданные; скачать — отдельным эндпоинтом)."""
+    query = (
+        select(LeadAttachment)
+        .where(LeadAttachment.lead_id == lead_id)
+        .order_by(LeadAttachment.id.desc())
+    )
+    return (await session.execute(query)).scalars().all()
+
+
+@router.get("/{lead_id}/attachments/{attachment_id}/download")
+async def download_attachment(
+    lead_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Скачать/просмотреть байты вложения лида."""
+    attachment = await session.get(LeadAttachment, attachment_id)
+    if attachment is None or attachment.lead_id != lead_id:
+        raise HTTPException(status_code=404, detail="Вложение не найдено")
+    try:
+        data = read_attachment(attachment.storage_path)
+    except (AttachmentRejected, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail="Файл вложения недоступен на диске") from exc
+
+    # Content-Disposition — только latin-1 (RFC 7230); имя файла может быть кириллицей
+    # (тендерная заявка/письмо) — ASCII-фолбэк + RFC 5987 filename* для нормального имени.
+    from urllib.parse import quote
+
+    ascii_fallback = attachment.filename.encode("ascii", "ignore").decode("ascii") or "file"
+    encoded_name = quote(attachment.filename)
+    return Response(
+        content=data,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_name}'
+            )
+        },
+    )
