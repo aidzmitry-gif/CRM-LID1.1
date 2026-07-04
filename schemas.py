@@ -97,3 +97,23 @@ class LeadAttachmentOut(BaseModel):
     size_bytes: int
     source: str
     created_at: datetime
+
+
+class RouteIn(BaseModel):
+    """Опциональное тело POST /route: ручной выбор менеджера вместо авто-правил.
+
+    ``assigned_to`` должен совпадать с одним из известных ``MANAGERS`` (leads.py) —
+    иначе 422 (не даём привязать лид к несуществующему/опечатанному имени).
+    Без тела (или пустой ``assigned_to``) — прежнее поведение: авто-правила.
+    """
+
+    assigned_to: str | None = None
+
+
+class ManagerOut(BaseModel):
+    """Менеджер для пикера ручной раздачи: специализация + текущая загрузка."""
+
+    name: str
+    regions: list[str]
+    products: list[str]
+    load: int

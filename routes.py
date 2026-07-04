@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from urllib.parse import quote
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +16,7 @@ from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from modules.leads.ai import qualify_lead
-from modules.leads.leads import lead_priority, route_lead, score_lead
+from modules.leads.leads import MANAGERS, choose_funnel, lead_priority, route_lead, score_lead
 from modules.leads.models import Lead, LeadAttachment
 from modules.leads.schemas import (
     LeadAttachmentIn,
@@ -24,6 +26,8 @@ from modules.leads.schemas import (
     LeadOut,
     LeadQualifyOut,
     LeadRouteOut,
+    ManagerOut,
+    RouteIn,
 )
 from modules.leads.storage import (
     AttachmentRejected,
@@ -95,6 +99,20 @@ async def create_lead(
     return lead
 
 
+@router.get("/managers", response_model=list[ManagerOut])
+async def list_managers(session: AsyncSession = Depends(get_session)):
+    """Менеджеры для ручной раздачи: специализация (гео/продукт) + текущая загрузка.
+
+    ДО ``/{lead_id}`` в файле нарочно — иначе FastAPI примет ``managers`` за
+    ``lead_id`` (422 «не int») раньше, чем дойдёт до этого маршрута.
+    """
+    loads = await _manager_loads(session)
+    return [
+        ManagerOut(name=m["name"], regions=m["regions"], products=m["products"], load=loads.get(m["name"], 0))
+        for m in MANAGERS
+    ]
+
+
 @router.get("/{lead_id}", response_model=LeadOut)
 async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
     """Один лид по id."""
@@ -159,12 +177,21 @@ async def qualify(
 @router.post("/{lead_id}/route", response_model=LeadRouteOut)
 async def route(
     lead_id: int,
+    payload: RouteIn | None = Body(default=None),
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
 ):
-    """Распределить лид на менеджера по правилам (география/продукт/нагрузка/воронка).
+    """Распределить лид на менеджера — по правилам или вручную.
 
-    Публикует ``leads.lead.routed`` (→ audit). Уже сконвертированный лид — 409.
+    Без тела (или пустой ``assigned_to``) — прежние авто-правила (география/
+    продукт/нагрузка). С ``{"assigned_to": "<имя>"}`` — явный выбор оператора
+    (список менеджеров с загрузкой — ``GET /leads/managers``); имя должно
+    совпадать с одним из известных менеджеров, иначе 422 (не даём привязать
+    лид к несуществующему/опечатанному имени). Воронка при ручном выборе
+    считается теми же правилами (``choose_funnel``), что и при авто-режиме.
+
+    Публикует ``leads.lead.routed`` (то же событие в обоих режимах, + флаг
+    ``manual`` для аудита). Уже сконвертированный лид — 409.
     """
     lead = await session.get(Lead, lead_id)
     if lead is None:
@@ -173,8 +200,15 @@ async def route(
         raise HTTPException(status_code=409, detail="Лид уже сконвертирован в сделку")
 
     known = await _known_customer(session, lead.company)
-    loads = await _manager_loads(session)
-    manager, funnel = route_lead(lead, loads, known)
+    manual_manager = (payload.assigned_to or "").strip() if payload else ""
+    if manual_manager:
+        if manual_manager not in {m["name"] for m in MANAGERS}:
+            raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
+        manager, funnel = manual_manager, choose_funnel(lead, known)
+    else:
+        loads = await _manager_loads(session)
+        manager, funnel = route_lead(lead, loads, known)
+
     lead.assigned_to = manager
     lead.funnel = funnel
     lead.status = "routed"
@@ -183,7 +217,7 @@ async def route(
         "leads.lead.routed",
         {
             "lead_id": lead.id, "assigned_to": manager, "funnel": funnel,
-            "entity_ref": f"lead:{lead.id}",
+            "manual": bool(manual_manager), "entity_ref": f"lead:{lead.id}",
         },
     )
     await session.commit()
@@ -293,8 +327,6 @@ async def download_attachment(
 
     # Content-Disposition — только latin-1 (RFC 7230); имя файла может быть кириллицей
     # (тендерная заявка/письмо) — ASCII-фолбэк + RFC 5987 filename* для нормального имени.
-    from urllib.parse import quote
-
     ascii_fallback = attachment.filename.encode("ascii", "ignore").decode("ascii") or "file"
     encoded_name = quote(attachment.filename)
     return Response(
