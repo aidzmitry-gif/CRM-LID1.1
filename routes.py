@@ -16,7 +16,14 @@ from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from modules.leads.ai import qualify_lead
-from modules.leads.leads import MANAGERS, choose_funnel, lead_priority, route_lead, score_lead
+from modules.leads.leads import (
+    MANAGERS,
+    REJECT_REASONS,
+    choose_funnel,
+    lead_priority,
+    route_lead,
+    score_lead,
+)
 from modules.leads.models import Lead, LeadAttachment
 from modules.leads.schemas import (
     LeadAttachmentIn,
@@ -25,8 +32,10 @@ from modules.leads.schemas import (
     LeadCreate,
     LeadOut,
     LeadQualifyOut,
+    LeadRejectOut,
     LeadRouteOut,
     ManagerOut,
+    RejectIn,
     RouteIn,
 )
 from modules.leads.storage import (
@@ -174,6 +183,38 @@ async def qualify(
     )
 
 
+@router.post("/{lead_id}/reject", response_model=LeadRejectOut)
+async def reject_lead(
+    lead_id: int,
+    payload: RejectIn,
+    core: Core = Depends(get_core),
+    session: AsyncSession = Depends(get_session),
+):
+    """Отклонить лид (Слайс 4) — терминальный статус ``rejected`` + причина.
+
+    ``reason`` — один из ``REJECT_REASONS`` (не наш профиль/нет бюджета/дубль/
+    конкурент), иначе 422: фиксированный список, чтобы отчёты по причинам отказа
+    были сравнимы. Уже сконвертированный или уже отклонённый лид — 409.
+    """
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    if lead.status in ("converted", "rejected"):
+        raise HTTPException(status_code=409, detail=f"Лид уже в терминальном статусе: {lead.status}")
+    if payload.reason not in REJECT_REASONS:
+        raise HTTPException(status_code=422, detail=f"Неизвестная причина отказа: {payload.reason}")
+
+    lead.status = "rejected"
+    lead.reject_reason = payload.reason
+    core.event_bus.emit(
+        session,
+        "leads.lead.rejected",
+        {"lead_id": lead.id, "reason": payload.reason, "entity_ref": f"lead:{lead.id}"},
+    )
+    await session.commit()
+    return LeadRejectOut(id=lead.id, status=lead.status, reject_reason=lead.reject_reason)
+
+
 @router.post("/{lead_id}/route", response_model=LeadRouteOut)
 async def route(
     lead_id: int,
@@ -190,6 +231,9 @@ async def route(
     лид к несуществующему/опечатанному имени). Воронка при ручном выборе
     считается теми же правилами (``choose_funnel``), что и при авто-режиме.
 
+    ``next_step_at``/``next_step_note`` (Слайс 4, опционально) — срок и заметка
+    для продавца, ставятся вместе с раздачей независимо от авто/ручного режима.
+
     Публикует ``leads.lead.routed`` (то же событие в обоих режимах, + флаг
     ``manual`` для аудита). Уже сконвертированный лид — 409.
     """
@@ -198,6 +242,8 @@ async def route(
         raise HTTPException(status_code=404, detail="Лид не найден")
     if lead.status == "converted":
         raise HTTPException(status_code=409, detail="Лид уже сконвертирован в сделку")
+    if lead.status == "rejected":
+        raise HTTPException(status_code=409, detail="Лид отклонён — раздача недоступна")
 
     known = await _known_customer(session, lead.company)
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
@@ -212,6 +258,9 @@ async def route(
     lead.assigned_to = manager
     lead.funnel = funnel
     lead.status = "routed"
+    if payload is not None and payload.next_step_at is not None:
+        lead.next_step_at = payload.next_step_at
+        lead.next_step_note = payload.next_step_note or ""
     core.event_bus.emit(
         session,
         "leads.lead.routed",

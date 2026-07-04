@@ -40,6 +40,9 @@ class LeadOut(BaseModel):
     assigned_to: str
     funnel: str
     deal_id: int | None = None
+    reject_reason: str = ""
+    next_step_at: datetime | None = None
+    next_step_note: str = ""
 
 
 class LeadQualifyOut(BaseModel):
@@ -108,6 +111,8 @@ class RouteIn(BaseModel):
     """
 
     assigned_to: str | None = None
+    next_step_at: datetime | None = None
+    next_step_note: str | None = None
 
 
 class ManagerOut(BaseModel):
@@ -117,3 +122,17 @@ class ManagerOut(BaseModel):
     regions: list[str]
     products: list[str]
     load: int
+
+
+class RejectIn(BaseModel):
+    """Тело POST /reject: причина отказа — одна из ``REJECT_REASONS`` (leads.py)."""
+
+    reason: str = Field(min_length=1)
+
+
+class LeadRejectOut(BaseModel):
+    """Результат отказа: терминальный статус ``rejected`` + причина."""
+
+    id: int
+    status: str
+    reject_reason: str

@@ -64,4 +64,9 @@ class Lead(Base):
     assigned_to: Mapped[str] = mapped_column(String(128), default="", server_default="")
     funnel: Mapped[str] = mapped_column(String(16), default="", server_default="")
     deal_id: Mapped[int | None] = mapped_column()
+    # причина отказа (см. REJECT_REASONS в leads.py) — заполняется POST /reject
+    reject_reason: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    # срок+заметка для продавца — выставляются при раздаче (POST /route)
+    next_step_at: Mapped[datetime | None] = mapped_column(DateTime)
+    next_step_note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
