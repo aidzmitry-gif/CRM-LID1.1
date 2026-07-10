@@ -63,6 +63,104 @@ def _mark_first_action(lead: Lead) -> None:
         lead.first_action_at = _utcnow()
 
 
+async def _compute_score(lead: Lead, session: AsyncSession) -> tuple[int, str, str]:
+    """Пересчитать скоринг лида (без мутации) → (балл, вердикт, причина).
+
+    Отделено от ``_apply_score``, чтобы /express мог проверить вердикт ДО того, как
+    менять лид — иначе неудачный (non-target) экспресс оставил бы лида в статусе
+    ``qualified`` без коммита, но видимым в той же сессии (тестовый клиент делит
+    сессию между запросами внутри теста).
+    """
+    known = await known_customer(session, lead.company)
+    return score_lead(lead, known)
+
+
+def _apply_score(lead: Lead, score: int, verdict: str, reason: str) -> None:
+    """Проставить на лиде посчитанный скоринг: балл/вердикт/причина, статус ``qualified``
+    (если был ``new``), first_action. Общая логика для /qualify и /express (Цикл 2)."""
+    lead.score = score
+    lead.qualification = verdict
+    lead.reason = reason
+    if lead.status == "new":
+        lead.status = "qualified"
+    _mark_first_action(lead)
+
+
+async def _emit_qualified(
+    lead: Lead, score: int, verdict: str, core: Core, session: AsyncSession
+) -> tuple[str | None, str | None]:
+    """AI-обоснование (если включён) + событие ``leads.lead.qualified``/``ai.lead.qualified``.
+
+    Возвращает (rationale, model). Общая логика для /qualify и /express (Цикл 2).
+    """
+    rationale: str | None = None
+    model: str | None = None
+    llm = core.services.llm
+    if llm.enabled:
+        rationale = await qualify_lead(llm, lead, score, verdict)
+        model = llm.model or "mock"
+        core.event_bus.emit(
+            session,
+            "ai.lead.qualified",
+            {
+                "lead_id": lead.id, "score": score, "verdict": verdict, "model": model,
+                "actor": "AI", "entity_ref": f"lead:{lead.id}",
+            },
+        )
+    else:
+        core.event_bus.emit(
+            session,
+            "leads.lead.qualified",
+            {"lead_id": lead.id, "score": score, "verdict": verdict, "entity_ref": f"lead:{lead.id}"},
+        )
+    return rationale, model
+
+
+async def _resolve_manager(lead: Lead, session: AsyncSession, manual_manager: str) -> tuple[str, str]:
+    """Выбрать менеджера и воронку — вручную (с проверкой по ``MANAGERS``) либо по авто-правилам.
+
+    ``manual_manager`` должен совпадать с одним из известных ``MANAGERS``, иначе 422 (не
+    даём привязать лид к несуществующему/опечатанному имени). Общая логика для /route и
+    /express (Цикл 2) — проверка живёт в одном месте.
+    """
+    known = await known_customer(session, lead.company)
+    if manual_manager:
+        if manual_manager not in {m["name"] for m in MANAGERS}:
+            raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
+        return manual_manager, choose_funnel(lead, known)
+    loads = await _manager_loads(session)
+    return route_lead(lead, loads, known)
+
+
+def _apply_route(
+    lead: Lead,
+    manager: str,
+    funnel: str,
+    next_step_at: datetime | None,
+    next_step_note: str | None,
+) -> None:
+    """Проставить раздачу на лиде: менеджер/воронка/статус routed/first_action, опц. след. шаг."""
+    lead.assigned_to = manager
+    lead.funnel = funnel
+    lead.status = "routed"
+    _mark_first_action(lead)
+    if next_step_at is not None:
+        lead.next_step_at = next_step_at
+        lead.next_step_note = next_step_note or ""
+
+
+def _emit_routed(lead: Lead, manager: str, funnel: str, manual: bool, core: Core, session: AsyncSession) -> None:
+    """Событие ``leads.lead.routed`` (+ флаг ``manual`` для аудита). Общая логика /route и /express."""
+    core.event_bus.emit(
+        session,
+        "leads.lead.routed",
+        {
+            "lead_id": lead.id, "assigned_to": manager, "funnel": funnel,
+            "manual": manual, "entity_ref": f"lead:{lead.id}",
+        },
+    )
+
+
 async def _manager_loads(session: AsyncSession) -> dict[str, int]:
     """Загрузка менеджеров для роутинга: активные распределённые лиды.
 
@@ -169,35 +267,9 @@ async def qualify(
     if lead is None:
         raise HTTPException(status_code=404, detail="Лид не найден")
 
-    known = await known_customer(session, lead.company)
-    score, verdict, reason = score_lead(lead, known)
-    lead.score = score
-    lead.qualification = verdict
-    lead.reason = reason
-    if lead.status == "new":
-        lead.status = "qualified"
-    _mark_first_action(lead)
-
-    rationale: str | None = None
-    model: str | None = None
-    llm = core.services.llm
-    if llm.enabled:
-        rationale = await qualify_lead(llm, lead, score, verdict)
-        model = llm.model or "mock"
-        core.event_bus.emit(
-            session,
-            "ai.lead.qualified",
-            {
-                "lead_id": lead.id, "score": score, "verdict": verdict, "model": model,
-                "actor": "AI", "entity_ref": f"lead:{lead.id}",
-            },
-        )
-    else:
-        core.event_bus.emit(
-            session,
-            "leads.lead.qualified",
-            {"lead_id": lead.id, "score": score, "verdict": verdict, "entity_ref": f"lead:{lead.id}"},
-        )
+    score, verdict, reason = await _compute_score(lead, session)
+    _apply_score(lead, score, verdict, reason)
+    rationale, model = await _emit_qualified(lead, score, verdict, core, session)
     await session.commit()
     return LeadQualifyOut(
         id=lead.id, status=lead.status, score=score, qualification=verdict,
@@ -268,33 +340,69 @@ async def route(
     if lead.status == "rejected":
         raise HTTPException(status_code=409, detail="Лид отклонён — раздача недоступна")
 
-    known = await known_customer(session, lead.company)
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
-    if manual_manager:
-        if manual_manager not in {m["name"] for m in MANAGERS}:
-            raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
-        manager, funnel = manual_manager, choose_funnel(lead, known)
-    else:
-        loads = await _manager_loads(session)
-        manager, funnel = route_lead(lead, loads, known)
-
-    lead.assigned_to = manager
-    lead.funnel = funnel
-    lead.status = "routed"
-    _mark_first_action(lead)
-    if payload is not None and payload.next_step_at is not None:
-        lead.next_step_at = payload.next_step_at
-        lead.next_step_note = payload.next_step_note or ""
-    core.event_bus.emit(
-        session,
-        "leads.lead.routed",
-        {
-            "lead_id": lead.id, "assigned_to": manager, "funnel": funnel,
-            "manual": bool(manual_manager), "entity_ref": f"lead:{lead.id}",
-        },
+    manager, funnel = await _resolve_manager(lead, session, manual_manager)
+    _apply_route(
+        lead, manager, funnel,
+        payload.next_step_at if payload else None,
+        payload.next_step_note if payload else None,
     )
+    _emit_routed(lead, manager, funnel, bool(manual_manager), core, session)
     await session.commit()
     return LeadRouteOut(id=lead.id, status=lead.status, assigned_to=manager, funnel=funnel)
+
+
+@router.post("/{lead_id}/express", response_model=LeadOut)
+async def express_lead(
+    lead_id: int,
+    payload: RouteIn | None = Body(default=None),
+    core: Core = Depends(get_core),
+    session: AsyncSession = Depends(get_session),
+):
+    """Экспресс-передача лида продавцу (Цикл 2) — квалификация + раздача + следующий шаг
+    одним действием в одной транзакции, вместо последовательных /qualify → /route.
+
+    Допустим только из ``new``/``qualified`` (иначе 409, как в /route). Тело — как у
+    /route (``assigned_to``/``next_step_at``/``next_step_note``, все опциональны):
+    ``assigned_to`` — ручной выбор менеджера с проверкой по ``MANAGERS`` (422 на
+    неизвестного), без него — авто-правила (``route_lead``). Скоринг пересчитывается
+    заново (как в /qualify); если вердикт оказался нецелевым — 422: экспресс не
+    подменяет ручную квалификацию сомнительных лидов, только явно целевых.
+
+    Эмитит оба события (``leads.lead.qualified``/``ai.lead.qualified`` и
+    ``leads.lead.routed``) — контракт шины не меняется, подписчики те же, что и на
+    последовательные /qualify + /route.
+    """
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    if lead.status == "converted":
+        raise HTTPException(status_code=409, detail="Лид уже сконвертирован в сделку")
+    if lead.status == "rejected":
+        raise HTTPException(status_code=409, detail="Лид отклонён — экспресс недоступен")
+    if lead.status == "routed":
+        raise HTTPException(status_code=409, detail="Лид уже распределён — экспресс недоступен")
+
+    score, verdict, reason = await _compute_score(lead, session)
+    if verdict != "target":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Лид не целевой (балл {score}) — экспресс недоступен, квалифицируй вручную",
+        )
+    _apply_score(lead, score, verdict, reason)
+    await _emit_qualified(lead, score, verdict, core, session)
+
+    manual_manager = (payload.assigned_to or "").strip() if payload else ""
+    manager, funnel = await _resolve_manager(lead, session, manual_manager)
+    _apply_route(
+        lead, manager, funnel,
+        payload.next_step_at if payload else None,
+        payload.next_step_note if payload else None,
+    )
+    _emit_routed(lead, manager, funnel, bool(manual_manager), core, session)
+
+    await session.commit()
+    return lead
 
 
 @router.post("/{lead_id}/convert", response_model=LeadConvertOut, status_code=201)
