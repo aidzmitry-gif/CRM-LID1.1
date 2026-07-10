@@ -6,20 +6,24 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import (
     MANAGERS,
     REJECT_REASONS,
+    apply_initial_score,
     choose_funnel,
+    find_open_lead_by_email,
+    find_open_lead_by_phone,
+    known_customer,
     lead_priority,
     route_lead,
     score_lead,
@@ -48,14 +52,15 @@ from modules.leads.storage import (
 router = APIRouter(tags=["leads"])
 
 
-async def _known_customer(session: AsyncSession, company: str) -> bool:
-    """Лид от действующего контрагента? (повышает балл, даёт воронку «постоянные»)."""
-    if not company:
-        return False
-    cp = (
-        await session.execute(select(Counterparty).where(Counterparty.name == company))
-    ).scalars().first()
-    return cp is not None
+def _utcnow() -> datetime:
+    # наивный UTC — единообразно для SQLite и PostgreSQL (см. modules/sales/repository.py)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _mark_first_action(lead: Lead) -> None:
+    """SLA первой реакции: проставить время первого действия лидоруба (один раз)."""
+    if lead.first_action_at is None:
+        lead.first_action_at = _utcnow()
 
 
 async def _manager_loads(session: AsyncSession) -> dict[str, int]:
@@ -95,9 +100,24 @@ async def create_lead(
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
 ):
-    """Принять лид из канала (сайт/мессенджер/e-mail/телефония/тендер) → событие в шину."""
+    """Принять лид из канала (сайт/мессенджер/e-mail/телефония/тендер) → событие в шину.
+
+    Дедуп: открытый лид (new/qualified/routed) с тем же телефоном или e-mail — 409
+    вместо создания дубля (ручной интейк лидорубом, в отличие от веб-формы/почты
+    не дописывает обращение автоматически — оператор решает сам, открыв дубль).
+    """
+    dup = await find_open_lead_by_phone(session, payload.phone)
+    if dup is None:
+        dup = await find_open_lead_by_email(session, payload.email)
+    if dup is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"duplicate_of": dup.id, "message": f"Дубль лида #{dup.id}"},
+        )
+
     lead = Lead(**payload.model_dump())
     session.add(lead)
+    await apply_initial_score(lead, session)  # балл сразу на входе, статус остаётся new
     await session.flush()
     core.event_bus.emit(
         session,
@@ -105,6 +125,7 @@ async def create_lead(
         {"lead_id": lead.id, "source": lead.source, "entity_ref": f"lead:{lead.id}"},
     )
     await session.commit()
+    await session.refresh(lead)  # created_at — server_default, нужен свежий снимок для LeadOut
     return lead
 
 
@@ -148,13 +169,14 @@ async def qualify(
     if lead is None:
         raise HTTPException(status_code=404, detail="Лид не найден")
 
-    known = await _known_customer(session, lead.company)
+    known = await known_customer(session, lead.company)
     score, verdict, reason = score_lead(lead, known)
     lead.score = score
     lead.qualification = verdict
     lead.reason = reason
     if lead.status == "new":
         lead.status = "qualified"
+    _mark_first_action(lead)
 
     rationale: str | None = None
     model: str | None = None
@@ -206,6 +228,7 @@ async def reject_lead(
 
     lead.status = "rejected"
     lead.reject_reason = payload.reason
+    _mark_first_action(lead)
     core.event_bus.emit(
         session,
         "leads.lead.rejected",
@@ -245,7 +268,7 @@ async def route(
     if lead.status == "rejected":
         raise HTTPException(status_code=409, detail="Лид отклонён — раздача недоступна")
 
-    known = await _known_customer(session, lead.company)
+    known = await known_customer(session, lead.company)
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
     if manual_manager:
         if manual_manager not in {m["name"] for m in MANAGERS}:
@@ -258,6 +281,7 @@ async def route(
     lead.assigned_to = manager
     lead.funnel = funnel
     lead.status = "routed"
+    _mark_first_action(lead)
     if payload is not None and payload.next_step_at is not None:
         lead.next_step_at = payload.next_step_at
         lead.next_step_note = payload.next_step_note or ""

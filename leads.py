@@ -8,10 +8,20 @@ AI-пилот дорожной карты (Lead Qualifier & Router).
 """
 from __future__ import annotations
 
+import re
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.domain.models import Counterparty
 from modules.leads.models import Lead
 
 # Источники лида (каналы приёма): сайт/лендинг, мессенджеры, e-mail, телефония, тендеры.
 LEAD_SOURCES = ("site", "telegram", "whatsapp", "email", "phone", "tender")
+
+# Открытые статусы — дедуп и загрузка менеджеров смотрят только на них
+# (терминальные converted/rejected не мешают новому обращению/лиду).
+OPEN_STATUSES = ("new", "qualified", "routed")
 
 # Менеджеры и их специализация — для маршрутизации по географии/продукту.
 # Последний (без регионов/продуктов) — универсал: catch-all при отсутствии совпадений.
@@ -118,3 +128,69 @@ def lead_priority(score: int) -> str:
     if score >= QUALIFY_THRESHOLD:
         return "Средний"
     return "Низкий"
+
+
+async def known_customer(session: AsyncSession, company: str) -> bool:
+    """Лид от действующего контрагента? (повышает балл, даёт воронку «постоянные»).
+
+    Общая логика для /qualify, /route и авто-скоринга на входе — раньше жила только
+    в routes.py (``_known_customer``), вынесена сюда, чтобы не дублировать запрос.
+    """
+    company = (company or "").strip()
+    if not company:
+        return False
+    cp = (await session.execute(select(Counterparty).where(Counterparty.name == company))).scalars().first()
+    return cp is not None
+
+
+async def apply_initial_score(lead: Lead, session: AsyncSession) -> None:
+    """Проставить стартовый балл/вердикт/причину сразу при создании лида.
+
+    Вызывается во всех точках приёма (POST /leads, интейк веб-формы/почты, звонок,
+    кампания) — лидоруб сразу видит приоритет, не дожидаясь явной /qualify. Статус
+    лида НЕ меняется (остаётся ``new``): переход в ``qualified`` — по-прежнему
+    отдельное действие оператора, которое пересчитает балл повторно.
+    """
+    known = await known_customer(session, lead.company)
+    lead.score, lead.qualification, lead.reason = score_lead(lead, known)
+
+
+def phone_tail(phone: str | None) -> str:
+    """Значащий хвост телефона (9 цифр) — контакты бывают без кода страны."""
+    return re.sub(r"\D", "", phone or "")[-9:]
+
+
+async def find_open_lead_by_phone(session: AsyncSession, phone: str | None) -> Lead | None:
+    """Открытый (new/qualified/routed) лид с тем же хвостом телефона, либо None.
+
+    Общий хелпер дедупа интейка — раньше жил только внутри ``on_call_logged``.
+    """
+    tail = phone_tail(phone)
+    if not tail:
+        return None
+    # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс
+    return (
+        await session.execute(
+            select(Lead).where(
+                Lead.phone.isnot(None),
+                Lead.phone.like(f"%{tail}"),
+                Lead.status.in_(OPEN_STATUSES),
+            )
+        )
+    ).scalars().first()
+
+
+async def find_open_lead_by_email(session: AsyncSession, email: str | None) -> Lead | None:
+    """Открытый (new/qualified/routed) лид с тем же e-mail (регистронезависимо), либо None."""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    return (
+        await session.execute(
+            select(Lead).where(
+                Lead.email.isnot(None),
+                Lead.email.ilike(email),
+                Lead.status.in_(OPEN_STATUSES),
+            )
+        )
+    ).scalars().first()

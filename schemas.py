@@ -43,6 +43,8 @@ class LeadOut(BaseModel):
     reject_reason: str = ""
     next_step_at: datetime | None = None
     next_step_note: str = ""
+    created_at: datetime
+    first_action_at: datetime | None = None
 
 
 class LeadQualifyOut(BaseModel):

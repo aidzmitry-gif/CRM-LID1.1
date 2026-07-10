@@ -70,3 +70,5 @@ class Lead(Base):
     next_step_at: Mapped[datetime | None] = mapped_column(DateTime)
     next_step_note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # SLA первой реакции: время первого действия лидоруба (qualify/route/reject), NULL пока не тронут
+    first_action_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger("aios.leads")
 
@@ -15,7 +16,7 @@ async def on_campaign_launched(payload: dict, ctx) -> None:
     """
     if ctx is None:
         return
-    from modules.leads.leads import LEAD_SOURCES
+    from modules.leads.leads import LEAD_SOURCES, apply_initial_score
     from modules.leads.models import Lead
 
     count = min(int(payload.get("leads", 0) or 0), 10)
@@ -23,13 +24,13 @@ async def on_campaign_launched(payload: dict, ctx) -> None:
     channel = payload.get("channel", "site")
     source = channel if channel in LEAD_SOURCES else "site"
     for _ in range(count):
-        ctx.session.add(
-            Lead(
-                source=source,
-                message=f"Заявка из кампании «{name}» (канал {channel})",
-                status="new",
-            )
+        lead = Lead(
+            source=source,
+            message=f"Заявка из кампании «{name}» (канал {channel})",
+            status="new",
         )
+        ctx.session.add(lead)
+        await apply_initial_score(lead, ctx.session)  # балл сразу, статус остаётся new
     logger.info("Leads: из кампании «%s» принято лидов: %d", name, count)
 
 
@@ -49,16 +50,14 @@ async def on_call_logged(payload: dict, ctx) -> None:
     if not phone:
         return
 
-    import re
-
     from sqlalchemy import select
 
     from core.domain.models import Contact
+    from modules.leads.leads import apply_initial_score, find_open_lead_by_phone, phone_tail
     from modules.leads.models import Lead
 
-    tail = re.sub(r"\D", "", phone)[-9:]  # значащий хвост: контакты могут быть без кода страны
+    tail = phone_tail(phone)
     if tail:
-        # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс
         known = (
             await ctx.session.execute(
                 select(Contact).where(Contact.phone.isnot(None), Contact.phone.like(f"%{tail}"))
@@ -66,16 +65,9 @@ async def on_call_logged(payload: dict, ctx) -> None:
         ).scalars().first()
         if known is not None:
             return  # известный контакт → обрабатывает sales (сделка/продавец)
-        dup = (
-            await ctx.session.execute(
-                select(Lead).where(
-                    Lead.phone.like(f"%{tail}"),
-                    Lead.status.in_(("new", "qualified", "routed")),  # только ОТКРЫТЫЕ
-                )
-            )
-        ).scalars().first()
-        if dup is not None:
-            return  # уже есть открытый лид с этого номера (терминальные converted/rejected — не помеха)
+    dup = await find_open_lead_by_phone(ctx.session, phone)
+    if dup is not None:
+        return  # уже есть открытый лид с этого номера (терминальные converted/rejected — не помеха)
 
     agent = payload.get("agent_ext") or ""
     lead = Lead(
@@ -85,6 +77,7 @@ async def on_call_logged(payload: dict, ctx) -> None:
         status="new",
     )
     ctx.session.add(lead)
+    await apply_initial_score(lead, ctx.session)
     await ctx.session.flush()
     ctx.services.event_bus.emit(
         ctx.session,
@@ -101,27 +94,51 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     сами лид не создают — публикуют ``intake.lead.received`` (модули не видят друг
     друга напрямую, §2.4). Здесь заявка превращается в ``Lead`` со статусом ``new``
     и лид входит в общую воронку приёма тем же событием, что и остальные каналы.
+
+    Дедуп: открытый лид с тем же телефоном/e-mail — новый лид не создаём, а
+    дописываем обращение к существующему (без нового события: он и так на виду).
     """
     if ctx is None:
         return
-    from modules.leads.leads import LEAD_SOURCES
+    from modules.leads.leads import (
+        LEAD_SOURCES,
+        apply_initial_score,
+        find_open_lead_by_email,
+        find_open_lead_by_phone,
+    )
     from modules.leads.models import Lead
 
     source = payload.get("source") or "site"
     if source not in LEAD_SOURCES:
         source = "site"
+    phone = (payload.get("phone") or "").strip() or None
+    email = (payload.get("email") or "").strip() or None
+    message = (payload.get("message") or "").strip()
+
+    dup = await find_open_lead_by_phone(ctx.session, phone)
+    if dup is None:
+        dup = await find_open_lead_by_email(ctx.session, email)
+    if dup is not None:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        note = f"Повторное обращение ({source}, {stamp}): {message}".strip()
+        dup.message = f"{dup.message}\n---\n{note}" if dup.message else note
+        await apply_initial_score(dup, ctx.session)  # пересчёт балла с учётом нового обращения
+        logger.info("Leads: повторное обращение (%s) → дописано к лиду %s", source, dup.id)
+        return
+
     lead = Lead(
         source=source,
         name=(payload.get("name") or "").strip(),
         company=(payload.get("company") or "").strip(),
-        phone=(payload.get("phone") or "").strip() or None,
-        email=(payload.get("email") or "").strip() or None,
+        phone=phone,
+        email=email,
         region=(payload.get("region") or "").strip(),
         product=(payload.get("product") or "").strip(),
-        message=(payload.get("message") or "").strip(),
+        message=message,
         status="new",
     )
     ctx.session.add(lead)
+    await apply_initial_score(lead, ctx.session)
     await ctx.session.flush()
     ctx.services.event_bus.emit(
         ctx.session,
