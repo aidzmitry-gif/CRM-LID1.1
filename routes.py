@@ -6,11 +6,11 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.runtime.core import Core
@@ -40,6 +40,7 @@ from modules.leads.schemas import (
     LeadQualifyOut,
     LeadRejectOut,
     LeadRouteOut,
+    LeadSourceStatOut,
     ManagerOut,
     RejectIn,
     RouteIn,
@@ -251,7 +252,14 @@ async def create_lead(
     core.event_bus.emit(
         session,
         "leads.lead.received",
-        {"lead_id": lead.id, "source": lead.source, "entity_ref": f"lead:{lead.id}"},
+        {
+            "lead_id": lead.id,
+            "source": lead.source,
+            "entity_ref": f"lead:{lead.id}",
+            "utm_source": lead.utm_source,
+            "utm_medium": lead.utm_medium,
+            "utm_campaign": lead.utm_campaign,
+        },
     )
     await session.commit()
     await session.refresh(lead)  # created_at — server_default, нужен свежий снимок для LeadOut
@@ -269,6 +277,51 @@ async def list_managers(session: AsyncSession = Depends(get_session)):
     return [
         ManagerOut(name=m["name"], regions=m["regions"], products=m["products"], load=loads.get(m["name"], 0))
         for m in MANAGERS
+    ]
+
+
+@router.get("/stats/sources", response_model=list[LeadSourceStatOut])
+async def source_stats(days: int = 30, session: AsyncSession = Depends(get_session)):
+    """Отчёт качества источника/кампании (Цикл 4) — за последние ``days`` дней.
+
+    ДО ``/{lead_id}`` в файле нарочно (как ``/managers``) — иначе FastAPI примет
+    ``stats`` за ``lead_id``. Один SQL-запрос с group by (source, utm_campaign) —
+    без выгрузки всех лидов в память.
+    """
+    since = _utcnow() - timedelta(days=days)
+    target = func.sum(case((Lead.qualification == "target", 1), else_=0))
+    converted = func.sum(case((Lead.status == "converted", 1), else_=0))
+    rejected = func.sum(case((Lead.status == "rejected", 1), else_=0))
+    total = func.count()
+    rows = (
+        await session.execute(
+            select(
+                Lead.source,
+                Lead.utm_campaign,
+                total,
+                target,
+                converted,
+                rejected,
+                func.avg(Lead.score),
+            )
+            .where(Lead.created_at >= since)
+            .group_by(Lead.source, Lead.utm_campaign)
+            .order_by(total.desc())
+        )
+    ).all()
+    return [
+        LeadSourceStatOut(
+            source=source,
+            utm_campaign=utm_campaign,
+            total=n,
+            target=n_target,
+            converted=n_converted,
+            rejected=n_rejected,
+            avg_score=round(float(avg_score or 0), 1),
+            target_pct=round(n_target / n * 100, 1) if n else 0.0,
+            conversion_pct=round(n_converted / n * 100, 1) if n else 0.0,
+        )
+        for source, utm_campaign, n, n_target, n_converted, n_rejected, avg_score in rows
     ]
 
 

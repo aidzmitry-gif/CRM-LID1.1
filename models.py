@@ -100,3 +100,8 @@ class Lead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     # SLA первой реакции: время первого действия лидоруба (qualify/route/reject), NULL пока не тронут
     first_action_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # UTM-атрибуция (Цикл 4): источник/канал/кампания рекламы, приведшей лид — для отчёта
+    # качества источников (routes.py) и атрибуции marketing (leads.lead.received → Campaign)
+    utm_source: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    utm_medium: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    utm_campaign: Mapped[str] = mapped_column(String(128), default="", server_default="")

@@ -23,11 +23,19 @@ async def on_campaign_launched(payload: dict, ctx) -> None:
     name = payload.get("name", "Кампания")
     channel = payload.get("channel", "site")
     source = channel if channel in LEAD_SOURCES else "site"
+    # UTM кампании (Цикл 4) — на каждый заведённый лид: отчёт качества источников
+    # (routes.py) и marketing-атрибуция (leads.lead.received) видят, откуда лид пришёл.
+    utm_source = str(payload.get("utm_source") or "").strip()
+    utm_medium = str(payload.get("utm_medium") or "").strip()
+    utm_campaign = str(payload.get("utm_campaign") or "").strip()
     for _ in range(count):
         lead = Lead(
             source=source,
             message=f"Заявка из кампании «{name}» (канал {channel})",
             status="new",
+            utm_source=utm_source,
+            utm_medium=utm_medium,
+            utm_campaign=utm_campaign,
         )
         ctx.session.add(lead)
         await apply_initial_score(lead, ctx.session)  # балл сразу, статус остаётся new
@@ -114,6 +122,11 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     phone = (payload.get("phone") or "").strip() or None
     email = (payload.get("email") or "").strip() or None
     message = (payload.get("message") or "").strip()
+    # UTM из _extract_utm (modules/integrations/routes.py) — те же ключи, аддитивно.
+    utm_source = (payload.get("utm_source") or "").strip()
+    utm_medium = (payload.get("utm_medium") or "").strip()
+    utm_campaign = (payload.get("utm_campaign") or "").strip()
+    landing_url = (payload.get("landing_url") or "").strip()
 
     dup = await find_open_lead_by_phone(ctx.session, phone)
     if dup is None:
@@ -136,6 +149,9 @@ async def on_intake_lead(payload: dict, ctx) -> None:
         product=(payload.get("product") or "").strip(),
         message=message,
         status="new",
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
     )
     ctx.session.add(lead)
     await apply_initial_score(lead, ctx.session)
@@ -143,7 +159,15 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     ctx.services.event_bus.emit(
         ctx.session,
         "leads.lead.received",
-        {"lead_id": lead.id, "source": source, "entity_ref": f"lead:{lead.id}"},
+        {
+            "lead_id": lead.id,
+            "source": source,
+            "entity_ref": f"lead:{lead.id}",
+            "utm_source": utm_source,
+            "utm_medium": utm_medium,
+            "utm_campaign": utm_campaign,
+            "landing_url": landing_url,
+        },
     )
     logger.info("Leads: интейк (%s) → лид %s", source, lead.id)
 

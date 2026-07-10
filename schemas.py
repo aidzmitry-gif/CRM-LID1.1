@@ -17,6 +17,11 @@ class LeadCreate(BaseModel):
     region: str = ""
     product: str = ""
     message: str = ""
+    # UTM-атрибуция (Цикл 4) — опционально: ручной интейк редко её знает, но API-клиент
+    # (например, кампания с прямой публикацией лида) может передать сразу.
+    utm_source: str = ""
+    utm_medium: str = ""
+    utm_campaign: str = ""
 
 
 class LeadOut(BaseModel):
@@ -49,6 +54,9 @@ class LeadOut(BaseModel):
     # показывали «🧾 N поз. · X BYN» без отдельного запроса. Проставляются в роутах (агрегат).
     items_count: int = 0
     items_total: float = 0.0
+    # UTM-атрибуция (Цикл 4) — для бейджа кампании на карточке лида
+    utm_source: str = ""
+    utm_campaign: str = ""
 
 
 class LeadQualifyOut(BaseModel):
@@ -172,3 +180,22 @@ class LeadRejectOut(BaseModel):
     id: int
     status: str
     reject_reason: str
+
+
+class LeadSourceStatOut(BaseModel):
+    """Отчёт качества источника/кампании (Цикл 4): GET /leads/stats/sources.
+
+    Специалист по лидам видит, какие (источник, кампания) дают целевых лидов и
+    конвертируются в сделки, а какие — мусор; маркетинг получает те же цифры для
+    решения по бюджету кампании.
+    """
+
+    source: str
+    utm_campaign: str
+    total: int
+    target: int
+    converted: int
+    rejected: int
+    avg_score: float
+    target_pct: float
+    conversion_pct: float
