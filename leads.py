@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domain.models import Counterparty
@@ -156,8 +156,13 @@ async def apply_initial_score(lead: Lead, session: AsyncSession) -> None:
 
 
 def phone_tail(phone: str | None) -> str:
-    """Значащий хвост телефона (9 цифр) — контакты бывают без кода страны."""
-    return re.sub(r"\D", "", phone or "")[-9:]
+    """Значащий хвост телефона (9 цифр) — контакты бывают без кода страны.
+
+    Хвост короче 7 цифр (обрезанный/битый ввод) не годится для дедупа:
+    LIKE-матч по нему цеплял бы чужие номера с тем же окончанием.
+    """
+    tail = re.sub(r"\D", "", phone or "")[-9:]
+    return tail if len(tail) >= 7 else ""
 
 
 async def find_open_lead_by_phone(session: AsyncSession, phone: str | None) -> Lead | None:
@@ -189,7 +194,9 @@ async def find_open_lead_by_email(session: AsyncSession, email: str | None) -> L
         await session.execute(
             select(Lead).where(
                 Lead.email.isnot(None),
-                Lead.email.ilike(email),
+                # точное сравнение, НЕ ilike: в LIKE-паттерне `_`/`%` — wildcard'ы,
+                # а `_` в адресах сплошь и рядом (ivan_petrov@) → ложные дубли
+                func.lower(Lead.email) == email,
                 Lead.status.in_(OPEN_STATUSES),
             )
         )
