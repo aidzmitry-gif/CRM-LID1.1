@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import Base
@@ -29,6 +30,33 @@ class LeadAttachment(Base):
     # ручная загрузка спецом | email-вложение | скан с тендерной площадки
     source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     storage_path: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LeadItem(Base):
+    """Позиция подбора товара на лиде — корзина каталог-пикера, сохранённая ДО сделки.
+
+    Спец по лидам подбирает товар прямо во время общения с клиентом (тот же
+    каталог-пикер, что и в сделках), подбор оседает здесь как КП. При конвертации
+    «В сделку + счёт» позиции переносятся в ``sales.deal_item`` фронтом (addDealItem)
+    и уходят в счёт — сама таблица живёт только на стороне лида.
+
+    ``sku_id`` — мягкая ссылка на shared-kernel ``Sku`` (как ``sales.deal_item``, без
+    cross-schema FK); ``sku_code``/``name`` продублированы, чтобы показать КП без join.
+    ``price`` — цена клиенту (уже с учётом скидки, как ``priceOverride`` пикера);
+    ``discount_pct`` — сама скидка справочно (сумма КП считается как ``qty*price``)."""
+
+    __tablename__ = "lead_item"
+    __table_args__ = {"schema": "leads"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.lead.id", ondelete="CASCADE"))
+    sku_id: Mapped[int] = mapped_column()
+    sku_code: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    name: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    qty: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("1"), server_default="1")
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), server_default="0")
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"), server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

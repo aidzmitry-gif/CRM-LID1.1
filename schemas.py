@@ -45,6 +45,10 @@ class LeadOut(BaseModel):
     next_step_note: str = ""
     created_at: datetime
     first_action_at: datetime | None = None
+    # Подбор товара на лиде (КП): число позиций и сумма (qty*price) — чтобы карточка/drawer
+    # показывали «🧾 N поз. · X BYN» без отдельного запроса. Проставляются в роутах (агрегат).
+    items_count: int = 0
+    items_total: float = 0.0
 
 
 class LeadQualifyOut(BaseModel):
@@ -101,6 +105,36 @@ class LeadAttachmentOut(BaseModel):
     content_type: str
     size_bytes: int
     source: str
+    created_at: datetime
+
+
+class LeadItemIn(BaseModel):
+    """Позиция подбора товара на лиде (тело PUT /leads/{id}/items — полный список, replace-all).
+
+    ``price`` — цена клиенту (уже со скидкой, как в пикере); ``discount_pct`` — скидка справочно.
+    """
+
+    sku_id: int
+    sku_code: str = ""
+    name: str = ""
+    qty: float = 1
+    price: float = 0
+    discount_pct: float = 0
+
+
+class LeadItemOut(BaseModel):
+    """Позиция подбора товара на лиде в ответах API (GET/PUT /leads/{id}/items)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    sku_id: int
+    sku_code: str
+    name: str
+    qty: float
+    price: float
+    discount_pct: float
     created_at: datetime
 
 

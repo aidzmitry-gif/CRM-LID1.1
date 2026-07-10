@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.runtime.core import Core
@@ -28,12 +28,14 @@ from modules.leads.leads import (
     route_lead,
     score_lead,
 )
-from modules.leads.models import Lead, LeadAttachment
+from modules.leads.models import Lead, LeadAttachment, LeadItem
 from modules.leads.schemas import (
     LeadAttachmentIn,
     LeadAttachmentOut,
     LeadConvertOut,
     LeadCreate,
+    LeadItemIn,
+    LeadItemOut,
     LeadOut,
     LeadQualifyOut,
     LeadRejectOut,
@@ -55,6 +57,34 @@ router = APIRouter(tags=["leads"])
 def _utcnow() -> datetime:
     # наивный UTC — единообразно для SQLite и PostgreSQL (см. modules/sales/repository.py)
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def _attach_item_totals(session: AsyncSession, leads: list[Lead]) -> list[Lead]:
+    """Проставить лидам ``items_count``/``items_total`` (сумма qty*price) для LeadOut.
+
+    Один агрегат по всем лидам сразу (без N+1): карточка/drawer показывают «КП: N поз.
+    на X BYN» без отдельного запроса. Значения кладём как transient-атрибуты — LeadOut
+    (from_attributes) их читает; для лидов без позиций остаются дефолтные 0."""
+    ids = [lead.id for lead in leads]
+    totals: dict[int, tuple[int, float]] = {}
+    if ids:
+        rows = (
+            await session.execute(
+                select(
+                    LeadItem.lead_id,
+                    func.count(),
+                    func.coalesce(func.sum(LeadItem.qty * LeadItem.price), 0),
+                )
+                .where(LeadItem.lead_id.in_(ids))
+                .group_by(LeadItem.lead_id)
+            )
+        ).all()
+        totals = {lead_id: (count, float(total)) for lead_id, count, total in rows}
+    for lead in leads:
+        count, total = totals.get(lead.id, (0, 0.0))
+        lead.items_count = count
+        lead.items_total = total
+    return leads
 
 
 def _mark_first_action(lead: Lead) -> None:
@@ -189,7 +219,8 @@ async def list_leads(status: str = "", session: AsyncSession = Depends(get_sessi
     query = select(Lead).order_by(Lead.id.desc())
     if status:
         query = query.where(Lead.status == status)
-    return (await session.execute(query)).scalars().all()
+    leads = list((await session.execute(query)).scalars().all())
+    return await _attach_item_totals(session, leads)
 
 
 @router.post("", response_model=LeadOut, status_code=201)
@@ -247,6 +278,7 @@ async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
     lead = await session.get(Lead, lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Лид не найден")
+    (await _attach_item_totals(session, [lead]))
     return lead
 
 
@@ -402,6 +434,7 @@ async def express_lead(
     _emit_routed(lead, manager, funnel, bool(manual_manager), core, session)
 
     await session.commit()
+    (await _attach_item_totals(session, [lead]))
     return lead
 
 
@@ -428,6 +461,24 @@ async def convert_lead(
         raise HTTPException(status_code=409, detail="Сначала распределите лид на менеджера")
 
     lead.status = "converted"
+    # Позиции подобранного КП — в payload события (аддитивно: подписчик sales со старым
+    # контрактом их игнорирует; перенос позиций в сделку делает фронт цепочкой «В сделку + счёт»).
+    item_rows = (
+        await session.execute(
+            select(LeadItem).where(LeadItem.lead_id == lead.id).order_by(LeadItem.id)
+        )
+    ).scalars().all()
+    items = [
+        {
+            "sku_id": it.sku_id,
+            "sku_code": it.sku_code,
+            "name": it.name,
+            "qty": float(it.qty),
+            "price": float(it.price),
+            "discount_pct": float(it.discount_pct),
+        }
+        for it in item_rows
+    ]
     core.event_bus.emit(
         session,
         "leads.lead.converted",
@@ -437,6 +488,7 @@ async def convert_lead(
             "counterparty": lead.company or lead.name or "Новый лид",
             "owner": lead.assigned_to,
             "priority": lead_priority(lead.score),
+            "items": items,
             "entity_ref": f"lead:{lead.id}",
         },
     )
@@ -478,6 +530,49 @@ async def upload_attachment(
     await session.commit()
     await session.refresh(attachment)
     return attachment
+
+
+@router.get("/{lead_id}/items", response_model=list[LeadItemOut])
+async def list_items(lead_id: int, session: AsyncSession = Depends(get_session)):
+    """Позиции подобранного КП лида (корзина каталог-пикера)."""
+    query = select(LeadItem).where(LeadItem.lead_id == lead_id).order_by(LeadItem.id)
+    return (await session.execute(query)).scalars().all()
+
+
+@router.put("/{lead_id}/items", response_model=list[LeadItemOut])
+async def replace_items(
+    lead_id: int,
+    payload: list[LeadItemIn],
+    session: AsyncSession = Depends(get_session),
+):
+    """Заменить весь подбор товара лида (replace-all: удалить старые, записать новые).
+
+    Полный список позиций проще всего синхронизировать с корзиной пикера целиком.
+    Уже сконвертированный/отклонённый лид — 409 (подбор править нельзя: сделка/счёт
+    уже живут своей жизнью, терминальный лид не редактируем)."""
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    if lead.status in ("converted", "rejected"):
+        raise HTTPException(status_code=409, detail=f"Лид в терминальном статусе: {lead.status}")
+
+    await session.execute(delete(LeadItem).where(LeadItem.lead_id == lead_id))
+    rows = [
+        LeadItem(
+            lead_id=lead_id,
+            sku_id=it.sku_id,
+            sku_code=it.sku_code,
+            name=it.name,
+            qty=it.qty,
+            price=it.price,
+            discount_pct=it.discount_pct,
+        )
+        for it in payload
+    ]
+    session.add_all(rows)
+    await session.commit()
+    query = select(LeadItem).where(LeadItem.lead_id == lead_id).order_by(LeadItem.id)
+    return (await session.execute(query)).scalars().all()
 
 
 @router.get("/{lead_id}/attachments", response_model=list[LeadAttachmentOut])
