@@ -39,6 +39,19 @@ async def on_campaign_launched(payload: dict, ctx) -> None:
         )
         ctx.session.add(lead)
         await apply_initial_score(lead, ctx.session)  # балл сразу, статус остаётся new
+        await ctx.session.flush()
+        ctx.services.event_bus.emit(
+            ctx.session,
+            "leads.lead.received",
+            {
+                "lead_id": lead.id,
+                "source": source,
+                "entity_ref": f"lead:{lead.id}",
+                "utm_source": utm_source,
+                "utm_medium": utm_medium,
+                "utm_campaign": utm_campaign,
+            },
+        )
     logger.info("Leads: из кампании «%s» принято лидов: %d", name, count)
 
 
