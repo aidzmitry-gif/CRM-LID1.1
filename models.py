@@ -124,6 +124,10 @@ class Lead(Base):
     # момент конвертации в сделку (POST /convert) — для дневного план/факта (Цикл 5) и
     # петли исхода по времени (Цикл 7); NULL пока лид не сконвертирован
     converted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Момент передачи продавцу (/route, /express, /express-bulk) — пост-передача под
+    # контролем (Цикл 13): возраст «у продавца» на карточке, подсветка зависших >24ч
+    # в скорборде передач; NULL пока лид не распределён (у старых routed-лидов тоже NULL).
+    routed_at: Mapped[datetime | None] = mapped_column(DateTime)
     # UTM-атрибуция (Цикл 4): источник/канал/кампания рекламы, приведшей лид — для отчёта
     # качества источников (routes.py) и атрибуции marketing (leads.lead.received → Campaign)
     utm_source: Mapped[str] = mapped_column(String(128), default="", server_default="")

@@ -66,6 +66,10 @@ class LeadOut(BaseModel):
     customer_kind: str = ""
     # Реанимация памяти (Цикл 12): ссылка на ранее отклонённый лид того же контакта → бейдж «был отказ»
     revived_from_id: int | None = None
+    # Пост-передача под контролем (Цикл 13): возраст «у продавца» (routed_at) и сторож
+    # «converted без сделки» (converted_at + deal_id=NULL дольше пары минут → тревога).
+    routed_at: datetime | None = None
+    converted_at: datetime | None = None
 
 
 class LeadQualifyOut(BaseModel):
@@ -292,3 +296,8 @@ class LeadHandoffStatOut(BaseModel):
     converted: int
     pipeline: float
     conversion_pct: float
+    # Цикл 13 — пост-передача под контролем: переданные, но не сконвертированные лиды
+    # («в работе» у продавца) с их Σ КП, и сколько из них висят >24ч без сделки.
+    pending: int = 0
+    pending_pipeline: float = 0.0
+    stale: int = 0

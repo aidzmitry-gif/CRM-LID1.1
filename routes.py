@@ -214,6 +214,7 @@ def _apply_route(
     lead.assigned_to = manager
     lead.funnel = funnel
     lead.status = "routed"
+    lead.routed_at = _utcnow()  # Цикл 13: возраст «у продавца» + подсветка зависших
     _mark_first_action(lead)
     if next_step_at is not None:
         lead.next_step_at = next_step_at
@@ -423,17 +424,26 @@ async def handoff_stats(days: int = 30, session: AsyncSession = Depends(get_sess
 
     По каждому продавцу: сколько лидов лидоруб ему передал (routed/converted), сколько тот
     довёл до сделки и на какую сумму КП. Показывает вклад специалиста в план каждого
-    продавца деньгами. ДО ``/{lead_id}`` в файле нарочно (как ``/stats/sources``).
+    продавца деньгами. Цикл 13 — пост-передача под контролем: ``pending``/``pending_pipeline``
+    (переданные, но ещё не сконвертированные + их Σ КП «в работе») и ``stale`` (висят у
+    продавца >24ч без сделки) — дожим сегодня, а не постфактум через 30-дневный агрегат.
+    ДО ``/{lead_id}`` в файле нарочно (как ``/stats/sources``).
     """
     since = _utcnow() - timedelta(days=days)
+    stale_cutoff = _utcnow() - timedelta(hours=24)
     item_totals = _lead_item_totals_subquery()
     lead_total = func.coalesce(item_totals.c.lead_total, 0)
     assigned = func.count()
     converted = func.sum(case((Lead.status == "converted", 1), else_=0))
     pipeline = func.sum(case((Lead.status == "converted", lead_total), else_=0))
+    pending = func.sum(case((Lead.status == "routed", 1), else_=0))
+    pending_pipeline = func.sum(case((Lead.status == "routed", lead_total), else_=0))
+    stale = func.sum(
+        case(((Lead.status == "routed") & (Lead.routed_at < stale_cutoff), 1), else_=0)
+    )
     rows = (
         await session.execute(
-            select(Lead.assigned_to, assigned, converted, pipeline)
+            select(Lead.assigned_to, assigned, converted, pipeline, pending, pending_pipeline, stale)
             .select_from(Lead)
             .outerjoin(item_totals, item_totals.c.lead_id == Lead.id)
             .where(
@@ -452,8 +462,11 @@ async def handoff_stats(days: int = 30, session: AsyncSession = Depends(get_sess
             converted=n_converted,
             pipeline=round(float(n_pipeline or 0), 2),
             conversion_pct=round(n_converted / n_assigned * 100, 1) if n_assigned else 0.0,
+            pending=n_pending,
+            pending_pipeline=round(float(n_pending_pipeline or 0), 2),
+            stale=n_stale,
         )
-        for manager, n_assigned, n_converted, n_pipeline in rows
+        for manager, n_assigned, n_converted, n_pipeline, n_pending, n_pending_pipeline, n_stale in rows
     ]
 
 
@@ -748,7 +761,9 @@ async def express_bulk(
         _apply_score(lead, score, verdict, reason)
         await _emit_qualified(lead, score, verdict, core, session)
         manager, funnel, _rationale = await _resolve_manager(lead, session, "")
-        _apply_route(lead, manager, funnel, None, None)
+        # Цикл 13: конвейер не раздаёт «без шага» — иначе переданный лид невидим для
+        # контроля просрочки. Дефолт как у одиночного экспресса: позвонить завтра.
+        _apply_route(lead, manager, funnel, _utcnow() + timedelta(days=1), "Позвонить")
         _emit_routed(lead, manager, funnel, False, core, session)
         expressed.append(lead.id)
     await session.commit()
