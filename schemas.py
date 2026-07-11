@@ -72,12 +72,14 @@ class LeadQualifyOut(BaseModel):
 
 
 class LeadRouteOut(BaseModel):
-    """Результат распределения лида: назначенный менеджер и тип воронки."""
+    """Результат распределения лида: назначенный менеджер, тип воронки и обоснование выбора."""
 
     id: int
     status: str
     assigned_to: str
     funnel: str
+    # Цикл 8: почему этот менеджер (конверсия/загрузка или ручной выбор) — нота оператору
+    rationale: str = ""
 
 
 class LeadConvertOut(BaseModel):

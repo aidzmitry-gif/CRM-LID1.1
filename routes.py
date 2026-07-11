@@ -152,20 +152,35 @@ async def _emit_qualified(
     return rationale, model
 
 
-async def _resolve_manager(lead: Lead, session: AsyncSession, manual_manager: str) -> tuple[str, str]:
-    """Выбрать менеджера и воронку — вручную (с проверкой по ``MANAGERS``) либо по авто-правилам.
+async def _resolve_manager(
+    lead: Lead, session: AsyncSession, manual_manager: str
+) -> tuple[str, str, str]:
+    """Выбрать менеджера, воронку и обоснование — вручную либо умной маршрутизацией (Цикл 8).
 
     ``manual_manager`` должен совпадать с одним из известных ``MANAGERS``, иначе 422 (не
-    даём привязать лид к несуществующему/опечатанному имени). Общая логика для /route и
-    /express (Цикл 2) — проверка живёт в одном месте.
+    даём привязать лид к несуществующему/опечатанному имени). Авто-режим учитывает историю
+    конверсии менеджеров (``_manager_performance``): лид уходит лучшему закрывающему с
+    поправкой на загрузку. Возвращает (менеджер, воронка, обоснование выбора для оператора).
+    Общая логика для /route и /express (Цикл 2).
     """
     known = await known_customer(session, lead.company)
     if manual_manager:
         if manual_manager not in {m["name"] for m in MANAGERS}:
             raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
-        return manual_manager, choose_funnel(lead, known)
+        return manual_manager, choose_funnel(lead, known), f"Ручной выбор: {manual_manager}"
     loads = await _manager_loads(session)
-    return route_lead(lead, loads, known)
+    performance = await _manager_performance(session)
+    manager, funnel = route_lead(lead, loads, known, performance)
+    return manager, funnel, _route_rationale(manager, loads, performance)
+
+
+def _route_rationale(manager: str, loads: dict[str, int], performance: dict[str, float]) -> str:
+    """Человекочитаемое «почему этот менеджер» — для ноты оператору (Цикл 8)."""
+    load = loads.get(manager, 0)
+    conv = performance.get(manager)
+    if conv:
+        return f"{manager}: конверсия {round(conv * 100)}%, загрузка {load}"
+    return f"{manager}: по правилам (гео/продукт), загрузка {load}"
 
 
 def _apply_route(
@@ -211,6 +226,29 @@ async def _manager_loads(session: AsyncSession) -> dict[str, int]:
         )
     ).all()
     return {name: n for name, n in rows}
+
+
+async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[str, float]:
+    """История конверсии менеджеров (Цикл 8): доля переданных лидов, дошедших до сделки.
+
+    За последние ``days`` дней по каждому менеджеру: converted / (routed+converted). Пустой
+    словарь при холодном старте (нет истории) → маршрутизация падает на прежний баланс загрузки.
+    """
+    since = _utcnow() - timedelta(days=days)
+    assigned = func.count()
+    converted = func.sum(case((Lead.status == "converted", 1), else_=0))
+    rows = (
+        await session.execute(
+            select(Lead.assigned_to, assigned, converted)
+            .where(
+                Lead.created_at >= since,
+                Lead.assigned_to != "",
+                Lead.status.in_(("routed", "converted")),
+            )
+            .group_by(Lead.assigned_to)
+        )
+    ).all()
+    return {name: (conv / asg if asg else 0.0) for name, asg, conv in rows}
 
 
 @router.get("/ping")
@@ -589,7 +627,7 @@ async def route(
         raise HTTPException(status_code=409, detail="Лид отклонён — раздача недоступна")
 
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
-    manager, funnel = await _resolve_manager(lead, session, manual_manager)
+    manager, funnel, rationale = await _resolve_manager(lead, session, manual_manager)
     _apply_route(
         lead, manager, funnel,
         payload.next_step_at if payload else None,
@@ -597,7 +635,9 @@ async def route(
     )
     _emit_routed(lead, manager, funnel, bool(manual_manager), core, session)
     await session.commit()
-    return LeadRouteOut(id=lead.id, status=lead.status, assigned_to=manager, funnel=funnel)
+    return LeadRouteOut(
+        id=lead.id, status=lead.status, assigned_to=manager, funnel=funnel, rationale=rationale
+    )
 
 
 @router.post("/{lead_id}/express", response_model=LeadOut)
@@ -641,7 +681,7 @@ async def express_lead(
     await _emit_qualified(lead, score, verdict, core, session)
 
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
-    manager, funnel = await _resolve_manager(lead, session, manual_manager)
+    manager, funnel, _rationale = await _resolve_manager(lead, session, manual_manager)
     _apply_route(
         lead, manager, funnel,
         payload.next_step_at if payload else None,
@@ -681,7 +721,7 @@ async def express_bulk(
             continue
         _apply_score(lead, score, verdict, reason)
         await _emit_qualified(lead, score, verdict, core, session)
-        manager, funnel = await _resolve_manager(lead, session, "")
+        manager, funnel, _rationale = await _resolve_manager(lead, session, "")
         _apply_route(lead, manager, funnel, None, None)
         _emit_routed(lead, manager, funnel, False, core, session)
         expressed.append(lead.id)

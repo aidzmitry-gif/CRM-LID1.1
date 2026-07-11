@@ -98,12 +98,25 @@ def choose_funnel(lead: Lead, known_customer: bool) -> str:
     return "new"
 
 
-def route_lead(lead: Lead, loads: dict[str, int], known_customer: bool) -> tuple[str, str]:
+# Цена одного активного лида в «единицах конверсии» при умной маршрутизации (Цикл 8):
+# менеджер с конверсией выше на 2 п.п. предпочитается, пока он не набрал +1 активный лид.
+# Так лид уходит лучшему закрывающему, но перекос выравнивается загрузкой. Потолок — тюнится.
+LOAD_PENALTY = 0.02
+
+
+def route_lead(
+    lead: Lead,
+    loads: dict[str, int],
+    known_customer: bool,
+    performance: dict[str, float] | None = None,
+) -> tuple[str, str]:
     """Назначить менеджера и воронку по правилам (география, продукт, нагрузка, тип).
 
     ``loads`` — текущая загрузка по менеджерам (число активных лидов/сделок). Среди
-    подходящих по гео/продукту берём наименее загруженного; нет совпадений —
-    распределяем по всем (универсал участвует всегда). Возвращает (менеджер, воронка).
+    подходящих по гео/продукту: при наличии истории конверсии (``performance``, Цикл 8)
+    берём лучшего закрывающего с поправкой на загрузку (``LOAD_PENALTY``); без истории —
+    прежнее правило наименее загруженного. Нет совпадений — распределяем по всем
+    (универсал участвует всегда). Возвращает (менеджер, воронка).
     """
     region = (lead.region or "").lower()
     product = (lead.product or "").lower()
@@ -116,8 +129,16 @@ def route_lead(lead: Lead, loads: dict[str, int], known_customer: bool) -> tuple
         return False
 
     candidates = [m for m in MANAGERS if matches(m)] or MANAGERS
-    # наименее загруженный (при равенстве — порядок объявления в MANAGERS)
-    chosen = min(candidates, key=lambda m: loads.get(m["name"], 0))
+    # есть история конверсии хотя бы у одного кандидата → умная маршрутизация к закрывающему;
+    # иначе (холодный старт/нет данных) — прежний баланс по загрузке.
+    if performance and any(performance.get(m["name"]) for m in candidates):
+        chosen = max(
+            candidates,
+            key=lambda m: performance.get(m["name"], 0.0) - loads.get(m["name"], 0) * LOAD_PENALTY,
+        )
+    else:
+        # наименее загруженный (при равенстве — порядок объявления в MANAGERS)
+        chosen = min(candidates, key=lambda m: loads.get(m["name"], 0))
     return chosen["name"], choose_funnel(lead, known_customer)
 
 
