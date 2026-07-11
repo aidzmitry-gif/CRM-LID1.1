@@ -62,6 +62,7 @@ from modules.leads.schemas import (
 from modules.leads.storage import (
     AttachmentRejected,
     decode_data_url,
+    delete_attachment,
     read_attachment,
     save_attachment,
 )
@@ -1081,3 +1082,25 @@ async def download_attachment(
             )
         },
     )
+
+
+@router.delete("/{lead_id}/attachments/{attachment_id}", status_code=204, dependencies=_WRITE)
+async def remove_attachment(
+    lead_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Удалить вложение лида — ошибочно загруженный файл (скан не того клиента) должен
+    убираться, а не жить на диске вечно (ПДн). Сначала файл с диска, затем строка БД."""
+    attachment = await session.get(LeadAttachment, attachment_id)
+    if attachment is None or attachment.lead_id != lead_id:
+        raise HTTPException(status_code=404, detail="Вложение не найдено")
+    try:
+        delete_attachment(attachment.storage_path)  # идемпотентно: отсутствующий файл — не ошибка
+    except (AttachmentRejected, OSError) as exc:
+        # файл занят (антивирус/параллельное скачивание на Windows) или кривой путь —
+        # 409 вместо неконтролируемого 500; строку БД НЕ удаляем (файл ещё на диске).
+        raise HTTPException(status_code=409, detail="Файл занят, повторите позже") from exc
+    await session.delete(attachment)
+    await session.commit()
+    return Response(status_code=204)

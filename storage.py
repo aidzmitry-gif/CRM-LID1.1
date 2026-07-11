@@ -26,6 +26,11 @@ ALLOWED_CONTENT_TYPES: dict[str, str] = {
     "image/png": ".png",
 }
 MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 МБ — скан/xlsx с запасом, не видеофайл
+# Потолок длины base64-строки под MAX_SIZE_BYTES: base64 раздувает данные в ~4/3.
+# Нужен, чтобы отсечь огромный data_url ДО b64decode (которое материализует всю
+# строку в память) — иначе злонамеренный/случайный мегабайтный ввод проедает RAM
+# до проверки размера в save_attachment.
+_MAX_B64_CHARS = (MAX_SIZE_BYTES // 3 + 1) * 4
 
 _DATA_DIR = Path(os.getenv("AIOS_LEADS_DATA_DIR", "./data/leads/attachments"))
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -46,6 +51,8 @@ def decode_data_url(data_url: str) -> tuple[str, bytes]:
     if not m:
         raise AttachmentRejected("Ожидался data-URI вида data:<mime>;base64,<...>")
     content_type, b64 = m.group(1), m.group(2)
+    if len(b64) > _MAX_B64_CHARS:
+        raise AttachmentRejected(f"Файл больше {MAX_SIZE_BYTES // (1024 * 1024)} МБ")
     try:
         data = base64.b64decode(b64, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -84,9 +91,23 @@ def save_attachment(lead_id: int, filename: str, content_type: str, data: bytes)
     return storage_path, size
 
 
-def read_attachment(storage_path: str) -> bytes:
-    """Прочитать байты вложения по относительному пути из ``LeadAttachment.storage_path``."""
+def _resolve_within_data_dir(storage_path: str) -> Path:
+    """Абсолютный путь вложения с гардом обхода каталога (path traversal)."""
     path = (_DATA_DIR / storage_path).resolve()
     if _DATA_DIR.resolve() not in path.parents:
         raise AttachmentRejected("Некорректный путь вложения")
-    return path.read_bytes()
+    return path
+
+
+def read_attachment(storage_path: str) -> bytes:
+    """Прочитать байты вложения по относительному пути из ``LeadAttachment.storage_path``."""
+    return _resolve_within_data_dir(storage_path).read_bytes()
+
+
+def delete_attachment(storage_path: str) -> None:
+    """Удалить файл вложения с диска (идемпотентно: отсутствующий — не ошибка).
+
+    Ошибочно загруженный файл с ПДн (скан не того клиента) должен быть удаляем,
+    а не жить на диске вечно. Гард обхода каталога — тот же, что при чтении.
+    """
+    _resolve_within_data_dir(storage_path).unlink(missing_ok=True)
