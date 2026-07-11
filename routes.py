@@ -24,6 +24,7 @@ from modules.leads.leads import (
     choose_funnel,
     find_open_lead_by_email,
     find_open_lead_by_phone,
+    is_key_lead,
     known_customer,
     lead_priority,
     route_lead,
@@ -90,6 +91,7 @@ async def _attach_item_totals(session: AsyncSession, leads: list[Lead]) -> list[
         count, total = totals.get(lead.id, (0, 0.0))
         lead.items_count = count
         lead.items_total = total
+        lead.is_key = is_key_lead(lead)  # Цикл 9: производный флаг ключевого лида (бейдж 🔑)
     return leads
 
 
@@ -177,14 +179,20 @@ async def _resolve_manager(
     # загрузка (``loads``) остаётся для ноты оператору — она нагляднее как «сколько сейчас висит».
     volume = {name: assigned for name, (_, assigned) in perf.items()}
     balance = {**loads, **volume}
-    manager, funnel = route_lead(lead, balance, known, rates)
-    return manager, funnel, _route_rationale(manager, loads, rates)
+    key = is_key_lead(lead)  # ключевой лид → лучшему закрывающему без штрафа загрузки (Цикл 9)
+    manager, funnel = route_lead(lead, balance, known, rates, key=key)
+    return manager, funnel, _route_rationale(manager, loads, rates, key)
 
 
-def _route_rationale(manager: str, loads: dict[str, int], performance: dict[str, float]) -> str:
-    """Человекочитаемое «почему этот менеджер» — для ноты оператору (Цикл 8)."""
+def _route_rationale(
+    manager: str, loads: dict[str, int], performance: dict[str, float], key: bool = False
+) -> str:
+    """Человекочитаемое «почему этот менеджер» — для ноты оператору (Цикл 8/9)."""
     load = loads.get(manager, 0)
     conv = performance.get(manager)
+    if key:
+        pref = "🔑 ключевой → "
+        return f"{pref}{manager}: конверсия {round(conv * 100)}%" if conv else f"{pref}{manager}"
     if conv:
         return f"{manager}: конверсия {round(conv * 100)}%, загрузка {load}"
     return f"{manager}: по правилам (гео/продукт), загрузка {load}"
@@ -314,6 +322,7 @@ async def create_lead(
     )
     await session.commit()
     await session.refresh(lead)  # created_at — server_default, нужен свежий снимок для LeadOut
+    lead.is_key = is_key_lead(lead)  # Цикл 9: производный флаг для ответа (create минует _attach)
     return lead
 
 
