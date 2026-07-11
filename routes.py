@@ -169,9 +169,16 @@ async def _resolve_manager(
             raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
         return manual_manager, choose_funnel(lead, known), f"Ручной выбор: {manual_manager}"
     loads = await _manager_loads(session)
-    performance = await _manager_performance(session)
-    manager, funnel = route_lead(lead, loads, known, performance)
-    return manager, funnel, _route_rationale(manager, loads, performance)
+    perf = await _manager_performance(session)
+    rates = {name: rate for name, (rate, _) in perf.items()}
+    # Баланс для умной маршрутизации — по НЕДАВНЕМУ объёму (routed+converted за окно), а не
+    # только открытым лидам: иначе нагрузка быстрого закрывающего «испаряется» при конвертации
+    # и штраф LOAD_PENALTY его не догоняет (лид уходит одному, остальные простаивают). Открытая
+    # загрузка (``loads``) остаётся для ноты оператору — она нагляднее как «сколько сейчас висит».
+    volume = {name: assigned for name, (_, assigned) in perf.items()}
+    balance = {**loads, **volume}
+    manager, funnel = route_lead(lead, balance, known, rates)
+    return manager, funnel, _route_rationale(manager, loads, rates)
 
 
 def _route_rationale(manager: str, loads: dict[str, int], performance: dict[str, float]) -> str:
@@ -228,11 +235,12 @@ async def _manager_loads(session: AsyncSession) -> dict[str, int]:
     return {name: n for name, n in rows}
 
 
-async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[str, float]:
-    """История конверсии менеджеров (Цикл 8): доля переданных лидов, дошедших до сделки.
+async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[str, tuple[float, int]]:
+    """История менеджеров (Цикл 8) → ``{имя: (конверсия, недавний объём)}``.
 
-    За последние ``days`` дней по каждому менеджеру: converted / (routed+converted). Пустой
-    словарь при холодном старте (нет истории) → маршрутизация падает на прежний баланс загрузки.
+    За последние ``days`` дней по каждому менеджеру: конверсия = converted/(routed+converted)
+    и объём = число переданных лидов (для баланса нагрузки, чтобы конвертнутые лиды тоже
+    считались). Пустой словарь при холодном старте → маршрутизация падает на баланс загрузки.
     """
     since = _utcnow() - timedelta(days=days)
     assigned = func.count()
@@ -248,7 +256,7 @@ async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[st
             .group_by(Lead.assigned_to)
         )
     ).all()
-    return {name: (conv / asg if asg else 0.0) for name, asg, conv in rows}
+    return {name: (conv / asg if asg else 0.0, asg) for name, asg, conv in rows}
 
 
 @router.get("/ping")
