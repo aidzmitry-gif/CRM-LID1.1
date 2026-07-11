@@ -124,6 +124,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     from modules.leads.leads import (
         LEAD_SOURCES,
         apply_initial_score,
+        find_last_rejected_by_contact,
         find_open_lead_by_email,
         find_open_lead_by_phone,
         resolve_customer,
@@ -141,10 +142,12 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     utm_medium = (payload.get("utm_medium") or "").strip()
     utm_campaign = (payload.get("utm_campaign") or "").strip()
     landing_url = (payload.get("landing_url") or "").strip()
+    company = (payload.get("company") or "").strip()
 
-    dup = await find_open_lead_by_phone(ctx.session, phone)
+    # company (Цикл 12): тот же телефон/e-mail у другой компании — не дубль, заводим отдельный лид
+    dup = await find_open_lead_by_phone(ctx.session, phone, company)
     if dup is None:
-        dup = await find_open_lead_by_email(ctx.session, email)
+        dup = await find_open_lead_by_email(ctx.session, email, company)
     if dup is not None:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         note = f"Повторное обращение ({source}, {stamp}): {message}".strip()
@@ -176,6 +179,9 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     await apply_initial_score(lead, ctx.session)
     await ctx.session.flush()
     await resolve_customer(ctx.session, lead)  # Цикл 10: резолв против существующих клиентов
+    prior_rej = await find_last_rejected_by_contact(ctx.session, phone, email)
+    if prior_rej is not None:
+        lead.revived_from_id = prior_rej.id  # Цикл 12: память об отказе
     ctx.services.event_bus.emit(
         ctx.session,
         "leads.lead.received",

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domain.models import Counterparty
@@ -190,6 +190,31 @@ async def known_customer(session: AsyncSession, company: str) -> bool:
     return cp is not None
 
 
+async def find_last_rejected_by_contact(
+    session: AsyncSession, phone: str | None, email: str | None
+) -> Lead | None:
+    """Последний ОТКЛОНЁННЫЙ лид того же контакта (телефон-хвост/e-mail) — реанимация (Цикл 12).
+
+    Чтобы новый лид от ранее отклонённого контакта не терял память об отказе: продавец видит,
+    что уже был отказ и его причину, а не работает вслепую. Терминальные rejected в дедуп
+    открытых лидов не попадают — ищем их отдельно, самый свежий.
+    """
+    tail = phone_tail(phone)
+    email_n = (email or "").strip().lower()
+    conds = []
+    if tail:
+        conds.append(and_(Lead.phone.isnot(None), Lead.phone.like(f"%{tail}")))
+    if email_n:
+        conds.append(and_(Lead.email.isnot(None), func.lower(Lead.email) == email_n))
+    if not conds:
+        return None
+    return (
+        await session.execute(
+            select(Lead).where(Lead.status == "rejected", or_(*conds)).order_by(Lead.id.desc())
+        )
+    ).scalars().first()
+
+
 async def golden_counterparty_id(session: AsyncSession, cp_id: int) -> int:
     """Идти по цепочке ``merged_into_id`` до эталона (golden record) контрагента.
 
@@ -268,16 +293,34 @@ def phone_tail(phone: str | None) -> str:
     return tail if len(tail) >= 7 else ""
 
 
-async def find_open_lead_by_phone(session: AsyncSession, phone: str | None) -> Lead | None:
+def companies_conflict(a: str | None, b: str | None) -> bool:
+    """Разные компании при одинаковом контакте (Цикл 12, gap #3): защита от ложного дедупа.
+
+    Один телефон/e-mail бывает у РАЗНЫХ компаний (общий коммутатор, смена SIM, секретарь).
+    Конфликт только если оба имени непустые и ни одно не является подстрокой другого
+    (``Ромашка`` vs ``ООО Ромашка`` — не конфликт; ``Ромашка`` vs ``Стройторг`` — конфликт).
+    Пустое имя → не конфликт (дозаписываем, как раньше).
+    """
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return False
+    return a not in b and b not in a
+
+
+async def find_open_lead_by_phone(
+    session: AsyncSession, phone: str | None, company: str | None = None
+) -> Lead | None:
     """Открытый (new/qualified/routed) лид с тем же хвостом телефона, либо None.
 
-    Общий хелпер дедупа интейка — раньше жил только внутри ``on_call_logged``.
+    ``company`` (Цикл 12) — если у кандидата другая компания (конфликт), это НЕ дубль
+    (тот же номер у разных фирм): вернём None, чтобы завести отдельный лид, а не портить чужой.
     """
     tail = phone_tail(phone)
     if not tail:
         return None
     # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс
-    return (
+    cand = (
         await session.execute(
             select(Lead).where(
                 Lead.phone.isnot(None),
@@ -286,14 +329,22 @@ async def find_open_lead_by_phone(session: AsyncSession, phone: str | None) -> L
             )
         )
     ).scalars().first()
+    if cand is not None and companies_conflict(cand.company, company):
+        return None
+    return cand
 
 
-async def find_open_lead_by_email(session: AsyncSession, email: str | None) -> Lead | None:
-    """Открытый (new/qualified/routed) лид с тем же e-mail (регистронезависимо), либо None."""
+async def find_open_lead_by_email(
+    session: AsyncSession, email: str | None, company: str | None = None
+) -> Lead | None:
+    """Открытый (new/qualified/routed) лид с тем же e-mail (регистронезависимо), либо None.
+
+    ``company`` (Цикл 12) — как в ``find_open_lead_by_phone``: конфликт компаний → не дубль.
+    """
     email = (email or "").strip().lower()
     if not email:
         return None
-    return (
+    cand = (
         await session.execute(
             select(Lead).where(
                 Lead.email.isnot(None),
@@ -304,3 +355,6 @@ async def find_open_lead_by_email(session: AsyncSession, email: str | None) -> L
             )
         )
     ).scalars().first()
+    if cand is not None and companies_conflict(cand.company, company):
+        return None
+    return cand

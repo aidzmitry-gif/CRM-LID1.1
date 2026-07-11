@@ -23,6 +23,7 @@ from modules.leads.leads import (
     REJECT_REASONS,
     apply_initial_score,
     choose_funnel,
+    find_last_rejected_by_contact,
     find_open_lead_by_email,
     find_open_lead_by_phone,
     is_key_lead,
@@ -299,9 +300,9 @@ async def create_lead(
     вместо создания дубля (ручной интейк лидорубом, в отличие от веб-формы/почты
     не дописывает обращение автоматически — оператор решает сам, открыв дубль).
     """
-    dup = await find_open_lead_by_phone(session, payload.phone)
+    dup = await find_open_lead_by_phone(session, payload.phone, payload.company)
     if dup is None:
-        dup = await find_open_lead_by_email(session, payload.email)
+        dup = await find_open_lead_by_email(session, payload.email, payload.company)
     if dup is not None:
         raise HTTPException(
             status_code=409,
@@ -313,6 +314,9 @@ async def create_lead(
     await apply_initial_score(lead, session)  # балл сразу на входе, статус остаётся new
     await session.flush()
     await resolve_customer(session, lead)  # Цикл 10: резолв против существующих клиентов
+    prior_rej = await find_last_rejected_by_contact(session, lead.phone, lead.email)
+    if prior_rej is not None:
+        lead.revived_from_id = prior_rej.id  # Цикл 12: память об отказе
     core.event_bus.emit(
         session,
         "leads.lead.received",

@@ -134,3 +134,6 @@ class Lead(Base):
     # "" новый | "existing" действующий клиент из MDM/1С | "regular" постоянник (были лиды)
     counterparty_id: Mapped[int | None] = mapped_column()
     customer_kind: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    # Реанимация памяти (Цикл 12): ссылка на ранее отклонённый лид того же контакта —
+    # продавец видит, что с этим контактом уже был отказ (и его причину), а не работает вслепую.
+    revived_from_id: Mapped[int | None] = mapped_column()

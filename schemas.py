@@ -64,6 +64,8 @@ class LeadOut(BaseModel):
     # ("" новый | "existing" действующий | "regular" постоянник) — бейдж на карточке.
     counterparty_id: int | None = None
     customer_kind: str = ""
+    # Реанимация памяти (Цикл 12): ссылка на ранее отклонённый лид того же контакта → бейдж «был отказ»
+    revived_from_id: int | None = None
 
 
 class LeadQualifyOut(BaseModel):
