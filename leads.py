@@ -52,12 +52,14 @@ KEY_VOLUME_HINTS = ("тонн", "объём", "объем", "вагон", "фу�
 def is_key_lead(lead: Lead) -> bool:
     """Ключевой лид (Цикл 9) — высокий потенциал по данным, что уже есть на лиде (без запроса в БД).
 
-    Высокий балл (≥ порога «Высокий»), тендер (крупные заказы) или маркер объёма в тексте.
-    «Действующий клиент» как сигнал добавит Цикл 10 (маркер контрагента на лиде) — этот
-    предикат намеренно чистый и дешёвый, чтобы считаться на списке лидов без N+1."""
+    Высокий балл (≥ порога «Высокий»), тендер (крупные заказы), маркер объёма в тексте или
+    действующий клиент/постоянник (``customer_kind``, проставляет Цикл 10). Предикат намеренно
+    чистый и дешёвый — считается на списке лидов без N+1 (customer_kind уже на лиде)."""
     if lead.score >= KEY_SCORE_THRESHOLD:
         return True
     if lead.source == "tender":
+        return True
+    if lead.customer_kind in ("existing", "regular"):
         return True
     text = f"{lead.product} {lead.message}".lower()
     return any(hint in text for hint in KEY_VOLUME_HINTS)
@@ -186,6 +188,65 @@ async def known_customer(session: AsyncSession, company: str) -> bool:
         return False
     cp = (await session.execute(select(Counterparty).where(Counterparty.name == company))).scalars().first()
     return cp is not None
+
+
+async def golden_counterparty_id(session: AsyncSession, cp_id: int) -> int:
+    """Идти по цепочке ``merged_into_id`` до эталона (golden record) контрагента.
+
+    Дубль архивируется и ссылается на эталон (``core.services.mdm.merge``); лид должен
+    привязываться к эталону, а не к слитому дублю. Защита от цикла — множество посещённых.
+    """
+    cp = await session.get(Counterparty, cp_id)
+    seen: set[int] = set()
+    while cp is not None and cp.merged_into_id is not None and cp.id not in seen:
+        seen.add(cp.id)
+        cp = await session.get(Counterparty, cp.merged_into_id)
+    return cp.id if cp is not None else cp_id
+
+
+async def resolve_customer(session: AsyncSession, lead: Lead) -> None:
+    """Привязать лид к эталонному контрагенту и пометить тип клиента (Цикл 10).
+
+    Резолв против существующих клиентов, чтобы обращение действующего клиента не выглядело
+    холодным лидом: (1) по контакту (телефон/e-mail) → его контрагент; (2) иначе по имени
+    компании — точное совпадение активного эталона, затем fuzzy (высокий порог, чтобы не
+    склеить разные компании). Найденный id приводится к golden record. ``customer_kind``:
+    ``regular`` если по этому контрагенту уже были лиды (постоянник), иначе ``existing``.
+    Вызывается ПОСЛЕ flush (нужен ``lead.id`` для исключения себя из подсчёта). Не найдено —
+    лид остаётся новым/холодным (``customer_kind=""``).
+    """
+    from core.services import mdm
+
+    cp_id: int | None = None
+    contact = await mdm.find_contact(session, phone=lead.phone, email=lead.email)
+    if contact is not None and contact.counterparty_id is not None:
+        cp_id = contact.counterparty_id
+    if cp_id is None:
+        company = (lead.company or "").strip()
+        if company:
+            exact = (
+                await session.execute(
+                    select(Counterparty).where(
+                        Counterparty.name == company, Counterparty.is_active.is_(True)
+                    )
+                )
+            ).scalars().first()
+            if exact is not None:
+                cp_id = exact.id
+            else:
+                cands = await mdm.fuzzy_candidates(session, name=company, threshold=0.85)
+                if cands:
+                    cp_id = cands[0]["id"]
+    if cp_id is None:
+        return
+    cp_id = await golden_counterparty_id(session, cp_id)
+    lead.counterparty_id = cp_id
+    prior = (
+        await session.execute(
+            select(func.count()).where(Lead.counterparty_id == cp_id, Lead.id != lead.id)
+        )
+    ).scalar_one()
+    lead.customer_kind = "regular" if prior > 0 else "existing"
 
 
 async def apply_initial_score(lead: Lead, session: AsyncSession) -> None:

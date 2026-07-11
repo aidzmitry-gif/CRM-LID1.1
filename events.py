@@ -126,6 +126,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
         apply_initial_score,
         find_open_lead_by_email,
         find_open_lead_by_phone,
+        resolve_customer,
     )
     from modules.leads.models import Lead
 
@@ -169,6 +170,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     ctx.session.add(lead)
     await apply_initial_score(lead, ctx.session)
     await ctx.session.flush()
+    await resolve_customer(ctx.session, lead)  # Цикл 10: резолв против существующих клиентов
     ctx.services.event_bus.emit(
         ctx.session,
         "leads.lead.received",

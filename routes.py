@@ -27,6 +27,7 @@ from modules.leads.leads import (
     is_key_lead,
     known_customer,
     lead_priority,
+    resolve_customer,
     route_lead,
     score_lead,
 )
@@ -308,6 +309,7 @@ async def create_lead(
     session.add(lead)
     await apply_initial_score(lead, session)  # балл сразу на входе, статус остаётся new
     await session.flush()
+    await resolve_customer(session, lead)  # Цикл 10: резолв против существующих клиентов
     core.event_bus.emit(
         session,
         "leads.lead.received",

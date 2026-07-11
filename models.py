@@ -129,3 +129,8 @@ class Lead(Base):
     utm_source: Mapped[str] = mapped_column(String(128), default="", server_default="")
     utm_medium: Mapped[str] = mapped_column(String(128), default="", server_default="")
     utm_campaign: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    # Резолв против существующих клиентов (Цикл 10): мягкая ссылка на эталон контрагента
+    # (public.counterparty, без cross-schema FK — как sku_id) и тип клиента:
+    # "" новый | "existing" действующий клиент из MDM/1С | "regular" постоянник (были лиды)
+    counterparty_id: Mapped[int | None] = mapped_column()
+    customer_kind: Mapped[str] = mapped_column(String(16), default="", server_default="")
