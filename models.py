@@ -128,6 +128,14 @@ class Lead(Base):
     # контролем (Цикл 13): возраст «у продавца» на карточке, подсветка зависших >24ч
     # в скорборде передач; NULL пока лид не распределён (у старых routed-лидов тоже NULL).
     routed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Недозвон как состояние (Цикл 15): счётчик попыток контакта и срок перезвона.
+    # 93% конверсий достигаются к 6-й попытке — недозвонённый лид не теряется, а живёт
+    # в очереди «перезвонить к…» (просроченный callback подсвечивается и всплывает).
+    attempt_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    callback_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Повторное касание клиента (Цикл 15): дубль-звонок/повторная заявка обновляют метку —
+    # бейдж «↑ повтор» и подъём лида (повтор — самый горячий сигнал покупки дня).
+    last_touch_at: Mapped[datetime | None] = mapped_column(DateTime)
     # UTM-атрибуция (Цикл 4): источник/канал/кампания рекламы, приведшей лид — для отчёта
     # качества источников (routes.py) и атрибуции marketing (leads.lead.received → Campaign)
     utm_source: Mapped[str] = mapped_column(String(128), default="", server_default="")

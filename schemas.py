@@ -70,6 +70,10 @@ class LeadOut(BaseModel):
     # «converted без сделки» (converted_at + deal_id=NULL дольше пары минут → тревога).
     routed_at: datetime | None = None
     converted_at: datetime | None = None
+    # Недозвон + повтор (Цикл 15): попытки контакта, срок перезвона, последнее касание клиента.
+    attempt_count: int = 0
+    callback_at: datetime | None = None
+    last_touch_at: datetime | None = None
 
 
 class LeadQualifyOut(BaseModel):
@@ -215,6 +219,15 @@ class ManagerOut(BaseModel):
     regions: list[str]
     products: list[str]
     load: int
+
+
+class AttemptIn(BaseModel):
+    """Опциональное тело POST /attempt (Цикл 15): срок перезвона после недозвона.
+
+    Без тела — дефолт «через 2 часа». С ``callback_at`` — явное обещание клиенту
+    («перезвоните в четверг»), которое больше не живёт только в голове лидоруба."""
+
+    callback_at: datetime | None = None
 
 
 class RejectIn(BaseModel):

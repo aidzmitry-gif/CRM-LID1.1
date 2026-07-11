@@ -36,6 +36,7 @@ from modules.leads.leads import (
 )
 from modules.leads.models import Lead, LeadAttachment, LeadItem, LeadPlan
 from modules.leads.schemas import (
+    AttemptIn,
     LeadAttachmentIn,
     LeadAttachmentOut,
     LeadBulkExpressOut,
@@ -636,6 +637,38 @@ async def reject_lead(
     )
     await session.commit()
     return LeadRejectOut(id=lead.id, status=lead.status, reject_reason=lead.reject_reason)
+
+
+@router.post("/{lead_id}/attempt", response_model=LeadOut)
+async def log_attempt(
+    lead_id: int,
+    payload: AttemptIn | None = Body(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Недозвон (Цикл 15): +1 попытка контакта и срок перезвона — очередь вместо забвения.
+
+    Самый частый исход первого касания (>50% звонков) — недозвон; без состояния лид
+    гниёт в колонке молча, менеджеры бросают после 2-3 попыток, хотя 93% конверсий
+    достигаются к 6-й. Тело опционально: без него перезвон «через 2 часа», с
+    ``callback_at`` — явное обещание («перезвоните в четверг»). Недозвон — это
+    ДЕЙСТВИЕ лидоруба: first_action фиксируется (SLA реакции выполнен). Допустим
+    для new/qualified (у routed лидом занимается продавец, терминальные — 409).
+    """
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    if lead.status not in ("new", "qualified"):
+        raise HTTPException(
+            status_code=409, detail=f"Недозвон фиксируется до передачи, статус: {lead.status}"
+        )
+    lead.attempt_count += 1
+    lead.callback_at = (
+        payload.callback_at if payload and payload.callback_at else _utcnow() + timedelta(hours=2)
+    )
+    _mark_first_action(lead)
+    await session.commit()
+    (await _attach_item_totals(session, [lead]))
+    return lead
 
 
 @router.post("/{lead_id}/route", response_model=LeadRouteOut)

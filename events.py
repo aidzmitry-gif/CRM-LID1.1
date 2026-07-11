@@ -88,7 +88,15 @@ async def on_call_logged(payload: dict, ctx) -> None:
             return  # известный контакт → обрабатывает sales (сделка/продавец)
     dup = await find_open_lead_by_phone(ctx.session, phone)
     if dup is not None:
-        return  # уже есть открытый лид с этого номера (терминальные converted/rejected — не помеха)
+        # Цикл 15: повторный звонок — самый горячий сигнал покупки, раньше исчезал
+        # бесследно (голый return). Теперь след в message + метка касания → бейдж
+        # «↑ повтор» и подъём лида на доске.
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        note = f"Повторный звонок ({stamp}, доб. {payload.get('agent_ext') or '—'})"
+        dup.message = f"{dup.message}\n---\n{note}" if dup.message else note
+        dup.last_touch_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        logger.info("Leads: повторный звонок с %s → отмечен на лиде %s", phone, dup.id)
+        return
 
     agent = payload.get("agent_ext") or ""
     lead = Lead(
@@ -152,6 +160,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         note = f"Повторное обращение ({source}, {stamp}): {message}".strip()
         dup.message = f"{dup.message}\n---\n{note}" if dup.message else note
+        dup.last_touch_at = datetime.now(timezone.utc).replace(tzinfo=None)  # Цикл 15: «↑ повтор»
         await apply_initial_score(dup, ctx.session)  # пересчёт балла с учётом нового обращения
         # Цикл 10 (фикс ревью): если лид ещё холодный — повторно резолвим против клиентов.
         # Контрагент/контакт могли появиться в MDM ПОСЛЕ создания лида; иначе действующий
