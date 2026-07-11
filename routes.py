@@ -28,7 +28,7 @@ from modules.leads.leads import (
     route_lead,
     score_lead,
 )
-from modules.leads.models import Lead, LeadAttachment, LeadItem
+from modules.leads.models import Lead, LeadAttachment, LeadItem, LeadPlan
 from modules.leads.schemas import (
     LeadAttachmentIn,
     LeadAttachmentOut,
@@ -37,6 +37,8 @@ from modules.leads.schemas import (
     LeadItemIn,
     LeadItemOut,
     LeadOut,
+    LeadPlanIn,
+    LeadPlanOut,
     LeadQualifyOut,
     LeadRejectOut,
     LeadRouteOut,
@@ -325,6 +327,93 @@ async def source_stats(days: int = 30, session: AsyncSession = Depends(get_sessi
     ]
 
 
+async def _get_plan(session: AsyncSession) -> LeadPlan:
+    """Дневная норма лидоруба (одна строка ``period='daily'``); создаём при первом обращении."""
+    plan = (
+        await session.execute(select(LeadPlan).where(LeadPlan.period == "daily"))
+    ).scalars().first()
+    if plan is None:
+        plan = LeadPlan(period="daily")
+        session.add(plan)
+        await session.flush()
+    return plan
+
+
+async def _plan_facts(session: AsyncSession) -> tuple[int, int, int, int | None]:
+    """Факт лидоруба за сегодня → (обработано, целевых передано, доведено, ср. реакция мин).
+
+    «Сегодня» — наивный UTC-день (как ``created_at``/``first_action_at``). Обработано =
+    первое действие сегодня; целевых передано = из них целевые, ушедшие в routed/converted;
+    доведено = converted_at сегодня; реакция = ср. (first_action_at − created_at) по обработанным.
+    """
+    start = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    acted = (
+        await session.execute(
+            select(Lead.created_at, Lead.first_action_at, Lead.qualification, Lead.status).where(
+                Lead.first_action_at >= start, Lead.first_action_at < end
+            )
+        )
+    ).all()
+    leads_fact = len(acted)
+    qualified_fact = sum(
+        1 for _, _, q, s in acted if q == "target" and s in ("routed", "converted")
+    )
+    reaction_mins = [
+        (fa - ca).total_seconds() / 60
+        for ca, fa, _, _ in acted
+        if ca is not None and fa is not None and fa >= ca
+    ]
+    reaction_fact_min = round(sum(reaction_mins) / len(reaction_mins)) if reaction_mins else None
+    converted_fact = (
+        await session.execute(
+            select(func.count()).where(Lead.converted_at >= start, Lead.converted_at < end)
+        )
+    ).scalar_one()
+    return leads_fact, qualified_fact, converted_fact, reaction_fact_min
+
+
+def _plan_out(plan: LeadPlan, facts: tuple[int, int, int, int | None]) -> LeadPlanOut:
+    leads_fact, qualified_fact, converted_fact, reaction_fact_min = facts
+    return LeadPlanOut(
+        leads_target=plan.leads_target,
+        qualified_target=plan.qualified_target,
+        converted_target=plan.converted_target,
+        reaction_target_min=plan.reaction_target_min,
+        leads_fact=leads_fact,
+        qualified_fact=qualified_fact,
+        converted_fact=converted_fact,
+        reaction_fact_min=reaction_fact_min,
+    )
+
+
+@router.get("/plan", response_model=LeadPlanOut)
+async def get_plan(session: AsyncSession = Depends(get_session)):
+    """План/факт лидоруба за сегодня (Цикл 5): дневная норма + факт из лидов.
+
+    ДО ``/{lead_id}`` в файле нарочно (как ``/managers``/``/stats``) — иначе ``plan``
+    примут за ``lead_id``.
+    """
+    plan = await _get_plan(session)
+    facts = await _plan_facts(session)
+    await session.commit()  # _get_plan мог создать строку нормы
+    return _plan_out(plan, facts)
+
+
+@router.put("/plan", response_model=LeadPlanOut)
+async def set_plan(payload: LeadPlanIn, session: AsyncSession = Depends(get_session)):
+    """Задать дневную норму лидоруба (Цикл 5) — правит РОП/лидоруб; факт пересчитывается."""
+    plan = await _get_plan(session)
+    plan.leads_target = payload.leads_target
+    plan.qualified_target = payload.qualified_target
+    plan.converted_target = payload.converted_target
+    plan.reaction_target_min = payload.reaction_target_min
+    plan.updated_at = _utcnow()
+    await session.commit()
+    facts = await _plan_facts(session)
+    return _plan_out(plan, facts)
+
+
 @router.get("/{lead_id}", response_model=LeadOut)
 async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
     """Один лид по id."""
@@ -514,6 +603,7 @@ async def convert_lead(
         raise HTTPException(status_code=409, detail="Сначала распределите лид на менеджера")
 
     lead.status = "converted"
+    lead.converted_at = _utcnow()  # момент конвертации — для дневного план/факта (Цикл 5)
     # Позиции подобранного КП — в payload события (аддитивно: подписчик sales со старым
     # контрактом их игнорирует; перенос позиций в сделку делает фронт цепочкой «В сделку + счёт»).
     item_rows = (

@@ -182,6 +182,37 @@ class LeadRejectOut(BaseModel):
     reject_reason: str
 
 
+class LeadPlanIn(BaseModel):
+    """Тело PUT /leads/plan (Цикл 5): дневные цели лидоруба (норма).
+
+    Все поля >= 0; ``reaction_target_min`` — потолок скорости реакции, остальные — минимум
+    за день. Частичное обновление не поддерживаем: панель шлёт полный набор целей.
+    """
+
+    leads_target: int = Field(ge=0)
+    qualified_target: int = Field(ge=0)
+    converted_target: int = Field(ge=0)
+    reaction_target_min: int = Field(ge=0)
+
+
+class LeadPlanOut(BaseModel):
+    """План/факт лидоруба за сегодня (Цикл 5): GET/PUT /leads/plan.
+
+    ``*_target`` — дневная норма (leads.lead_plan), ``*_fact`` — факт за сегодня из лидов
+    (обработано = первое действие сегодня; целевых передано = из них целевые в routed/
+    converted; доведено = converted_at сегодня; reaction_fact_min = ср. скорость реакции,
+    None если сегодня ещё не реагировали). Фронт рисует прогресс и «осталось до нормы»."""
+
+    leads_target: int
+    qualified_target: int
+    converted_target: int
+    reaction_target_min: int
+    leads_fact: int
+    qualified_fact: int
+    converted_fact: int
+    reaction_fact_min: int | None = None
+
+
 class LeadSourceStatOut(BaseModel):
     """Отчёт качества источника/кампании (Цикл 4): GET /leads/stats/sources.
 

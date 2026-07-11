@@ -60,6 +60,27 @@ class LeadItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class LeadPlan(Base):
+    """Дневная норма лидоруба (Цикл 5) — план по обработке лидов, к которому меряется факт.
+
+    Одна «вечнозелёная» строка на период (``period='daily'``): цели НЕ обнуляются к новому
+    дню — это норма, а факт считается за сегодня из самих лидов (routes.py ``_plan_facts``).
+    Правит цели РОП/лидоруб (PUT /leads/plan). ``reaction_target_min`` — «держать НЕ выше»
+    (потолок скорости первой реакции), остальные три — «набрать НЕ ниже» за день.
+    """
+
+    __tablename__ = "lead_plan"
+    __table_args__ = {"schema": "leads"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period: Mapped[str] = mapped_column(String(16), unique=True, default="daily", server_default="daily")
+    leads_target: Mapped[int] = mapped_column(default=20, server_default="20")  # обработать лидов/день
+    qualified_target: Mapped[int] = mapped_column(default=8, server_default="8")  # целевых передать/день
+    converted_target: Mapped[int] = mapped_column(default=3, server_default="3")  # довести до сделки/день
+    reaction_target_min: Mapped[int] = mapped_column(default=15, server_default="15")  # потолок реакции, мин
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Lead(Base):
     """Лид — вход воронки CRM (приём → квалификация → распределение → сделка).
 
@@ -100,6 +121,9 @@ class Lead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     # SLA первой реакции: время первого действия лидоруба (qualify/route/reject), NULL пока не тронут
     first_action_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # момент конвертации в сделку (POST /convert) — для дневного план/факта (Цикл 5) и
+    # петли исхода по времени (Цикл 7); NULL пока лид не сконвертирован
+    converted_at: Mapped[datetime | None] = mapped_column(DateTime)
     # UTM-атрибуция (Цикл 4): источник/канал/кампания рекламы, приведшей лид — для отчёта
     # качества источников (routes.py) и атрибуции marketing (leads.lead.received → Campaign)
     utm_source: Mapped[str] = mapped_column(String(128), default="", server_default="")
