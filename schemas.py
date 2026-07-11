@@ -240,3 +240,20 @@ class LeadSourceStatOut(BaseModel):
     avg_score: float
     target_pct: float
     conversion_pct: float
+    # Цикл 7: Σ КП сконвертированных лидов источника — «сколько денег отдал продавцам»,
+    # чтобы качество источника мерилось деньгами, а не только числом сделок.
+    pipeline: float = 0.0
+
+
+class LeadHandoffStatOut(BaseModel):
+    """Скорборд передач лидоруба продавцам (Цикл 7): GET /leads/stats/handoffs.
+
+    Вклад специалиста в план каждого продавца: сколько лидов передал (routed/converted),
+    сколько из них продавец довёл до сделки и на какую сумму КП (``pipeline``). Показывает,
+    кому лидоруб питает пайплайн деньгами, а не просто числом лидов."""
+
+    manager: str
+    assigned: int
+    converted: int
+    pipeline: float
+    conversion_pct: float

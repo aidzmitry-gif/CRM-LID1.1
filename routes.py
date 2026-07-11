@@ -36,6 +36,7 @@ from modules.leads.schemas import (
     LeadBulkExpressOut,
     LeadConvertOut,
     LeadCreate,
+    LeadHandoffStatOut,
     LeadItemIn,
     LeadItemOut,
     LeadOut,
@@ -293,9 +294,13 @@ async def source_stats(days: int = 30, session: AsyncSession = Depends(get_sessi
     без выгрузки всех лидов в память.
     """
     since = _utcnow() - timedelta(days=days)
+    item_totals = _lead_item_totals_subquery()
+    lead_total = func.coalesce(item_totals.c.lead_total, 0)
     target = func.sum(case((Lead.qualification == "target", 1), else_=0))
     converted = func.sum(case((Lead.status == "converted", 1), else_=0))
     rejected = func.sum(case((Lead.status == "rejected", 1), else_=0))
+    # Σ КП только сконвертированных лидов (Цикл 7) — деньги, отданные продавцам из источника.
+    pipeline = func.sum(case((Lead.status == "converted", lead_total), else_=0))
     total = func.count()
     rows = (
         await session.execute(
@@ -307,7 +312,10 @@ async def source_stats(days: int = 30, session: AsyncSession = Depends(get_sessi
                 converted,
                 rejected,
                 func.avg(Lead.score),
+                pipeline,
             )
+            .select_from(Lead)
+            .outerjoin(item_totals, item_totals.c.lead_id == Lead.id)
             .where(Lead.created_at >= since)
             .group_by(Lead.source, Lead.utm_campaign)
             .order_by(total.desc())
@@ -324,8 +332,64 @@ async def source_stats(days: int = 30, session: AsyncSession = Depends(get_sessi
             avg_score=round(float(avg_score or 0), 1),
             target_pct=round(n_target / n * 100, 1) if n else 0.0,
             conversion_pct=round(n_converted / n * 100, 1) if n else 0.0,
+            pipeline=round(float(n_pipeline or 0), 2),
         )
-        for source, utm_campaign, n, n_target, n_converted, n_rejected, avg_score in rows
+        for source, utm_campaign, n, n_target, n_converted, n_rejected, avg_score, n_pipeline in rows
+    ]
+
+
+def _lead_item_totals_subquery():
+    """Подзапрос «сумма КП на лид» (Σ qty*price по позициям) — 1:1 к лиду для outerjoin.
+
+    Агрегируем позиции ПО лиду заранее, чтобы внешний group by (по источнику/менеджеру)
+    суммировал уже готовые суммы лидов, а не задваивал строки при join к lead_item."""
+    return (
+        select(
+            LeadItem.lead_id.label("lead_id"),
+            func.sum(LeadItem.qty * LeadItem.price).label("lead_total"),
+        )
+        .group_by(LeadItem.lead_id)
+        .subquery()
+    )
+
+
+@router.get("/stats/handoffs", response_model=list[LeadHandoffStatOut])
+async def handoff_stats(days: int = 30, session: AsyncSession = Depends(get_session)):
+    """Скорборд передач лидоруба продавцам (Цикл 7) — за последние ``days`` дней.
+
+    По каждому продавцу: сколько лидов лидоруб ему передал (routed/converted), сколько тот
+    довёл до сделки и на какую сумму КП. Показывает вклад специалиста в план каждого
+    продавца деньгами. ДО ``/{lead_id}`` в файле нарочно (как ``/stats/sources``).
+    """
+    since = _utcnow() - timedelta(days=days)
+    item_totals = _lead_item_totals_subquery()
+    lead_total = func.coalesce(item_totals.c.lead_total, 0)
+    assigned = func.count()
+    converted = func.sum(case((Lead.status == "converted", 1), else_=0))
+    pipeline = func.sum(case((Lead.status == "converted", lead_total), else_=0))
+    rows = (
+        await session.execute(
+            select(Lead.assigned_to, assigned, converted, pipeline)
+            .select_from(Lead)
+            .outerjoin(item_totals, item_totals.c.lead_id == Lead.id)
+            .where(
+                Lead.created_at >= since,
+                Lead.assigned_to != "",
+                Lead.status.in_(("routed", "converted")),
+            )
+            .group_by(Lead.assigned_to)
+            .order_by(pipeline.desc())
+        )
+    ).all()
+    return [
+        LeadHandoffStatOut(
+            manager=manager,
+            assigned=n_assigned,
+            converted=n_converted,
+            pipeline=round(float(n_pipeline or 0), 2),
+            conversion_pct=round(n_converted / n_assigned * 100, 1) if n_assigned else 0.0,
+        )
+        for manager, n_assigned, n_converted, n_pipeline in rows
     ]
 
 
