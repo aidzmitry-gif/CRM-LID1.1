@@ -208,12 +208,13 @@ async def resolve_customer(session: AsyncSession, lead: Lead) -> None:
     """Привязать лид к эталонному контрагенту и пометить тип клиента (Цикл 10).
 
     Резолв против существующих клиентов, чтобы обращение действующего клиента не выглядело
-    холодным лидом: (1) по контакту (телефон/e-mail) → его контрагент; (2) иначе по имени
-    компании — точное совпадение активного эталона, затем fuzzy (высокий порог, чтобы не
-    склеить разные компании). Найденный id приводится к golden record. ``customer_kind``:
-    ``regular`` если по этому контрагенту уже были лиды (постоянник), иначе ``existing``.
-    Вызывается ПОСЛЕ flush (нужен ``lead.id`` для исключения себя из подсчёта). Не найдено —
-    лид остаётся новым/холодным (``customer_kind=""``).
+    холодным лидом: (1) по контакту (телефон/e-mail) → его контрагент; (2) иначе по ТОЧНОМУ
+    имени активного эталона. Fuzzy-совпадение имени НЕ авто-привязываем: в MDM это «кандидаты
+    на approval, человек-в-контуре» (``mdm.fuzzy_candidates``, §7.2) — авто-склейка похожих
+    имён («…Плюс»/филиал) пометила бы разные компании как одну. Найденный id приводится к
+    golden record. ``customer_kind``: ``regular`` если по этому контрагенту уже были лиды
+    (постоянник), иначе ``existing``. Вызывается ПОСЛЕ flush (нужен ``lead.id`` для исключения
+    себя из подсчёта). Не найдено — лид остаётся новым/холодным (``customer_kind=""``).
     """
     from core.services import mdm
 
@@ -233,10 +234,6 @@ async def resolve_customer(session: AsyncSession, lead: Lead) -> None:
             ).scalars().first()
             if exact is not None:
                 cp_id = exact.id
-            else:
-                cands = await mdm.fuzzy_candidates(session, name=company, threshold=0.85)
-                if cands:
-                    cp_id = cands[0]["id"]
     if cp_id is None:
         return
     cp_id = await golden_counterparty_id(session, cp_id)

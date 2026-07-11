@@ -14,6 +14,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from modules.leads.ai import qualify_lead
@@ -48,6 +49,8 @@ from modules.leads.schemas import (
     LeadRejectOut,
     LeadRouteOut,
     LeadSourceStatOut,
+    LinkContactIn,
+    LinkContactOut,
     ManagerOut,
     RejectIn,
     RouteIn,
@@ -884,6 +887,55 @@ async def replace_items(
     await session.commit()
     query = select(LeadItem).where(LeadItem.lead_id == lead_id).order_by(LeadItem.id)
     return (await session.execute(query)).scalars().all()
+
+
+@router.post("/{lead_id}/link-contact", response_model=LinkContactOut)
+async def link_contact(
+    lead_id: int,
+    payload: LinkContactIn | None = Body(default=None),
+    session: AsyncSession = Depends(get_session),
+):
+    """Добавить контактное лицо лида в существующую компанию без дублей (Цикл 11).
+
+    Контрагент — из ``payload.counterparty_id`` либо резолва лида (Цикл 10,
+    ``lead.counterparty_id``); имя/телефон/e-mail по умолчанию берутся с лида. Делегирует
+    ``core.services.mdm.link_contact`` (get-or-create: если контакт с тем же телефоном/e-mail
+    уже есть у этой компании — вернём его, не плодя дубль). 422 — если контрагент не определён
+    или нет ни одного контактного поля; 404 — если контрагент не существует.
+    """
+    from core.services import mdm
+
+    lead = await session.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Лид не найден")
+    cp_id = (payload.counterparty_id if payload else None) or lead.counterparty_id
+    if not cp_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Лид не привязан к компании — сначала резолв клиента или укажите counterparty_id",
+        )
+    cp = await session.get(Counterparty, cp_id)
+    if cp is None:
+        raise HTTPException(status_code=404, detail="Контрагент не найден")
+
+    full_name = (payload.full_name if payload else "") or lead.name or lead.company
+    phone = (payload.phone if payload else None) or lead.phone
+    email = (payload.email if payload else None) or lead.email
+    if not (full_name.strip() or phone or email):
+        raise HTTPException(status_code=422, detail="Нет контактных данных для добавления контакта")
+
+    contact, created = await mdm.link_contact(
+        session,
+        cp_id,
+        full_name=full_name,
+        phone=phone,
+        email=email,
+        is_primary=bool(payload.is_primary) if payload else False,
+    )
+    await session.commit()
+    return LinkContactOut(
+        contact_id=contact.id, counterparty_id=cp_id, created=created, full_name=contact.full_name
+    )
 
 
 @router.get("/{lead_id}/attachments", response_model=list[LeadAttachmentOut])

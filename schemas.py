@@ -178,6 +178,30 @@ class RouteIn(BaseModel):
     next_step_note: str | None = None
 
 
+class LinkContactIn(BaseModel):
+    """Тело POST /leads/{id}/link-contact (Цикл 11): добавить контакт в компанию лида.
+
+    Все поля опциональны — по умолчанию берутся с лида (контрагент — из резолва Цикла 10,
+    имя/телефон/e-mail — контактные данные лида). ``counterparty_id`` можно переопределить
+    (напр. оператор выбрал другую компанию).
+    """
+
+    counterparty_id: int | None = None
+    full_name: str = ""
+    phone: str | None = None
+    email: str | None = None
+    is_primary: bool = False
+
+
+class LinkContactOut(BaseModel):
+    """Результат привязки контакта: id контакта/контрагента + был ли он создан или уже существовал."""
+
+    contact_id: int
+    counterparty_id: int
+    created: bool
+    full_name: str
+
+
 class ManagerOut(BaseModel):
     """Менеджер для пикера ручной раздачи: специализация + текущая загрузка."""
 

@@ -150,6 +150,11 @@ async def on_intake_lead(payload: dict, ctx) -> None:
         note = f"Повторное обращение ({source}, {stamp}): {message}".strip()
         dup.message = f"{dup.message}\n---\n{note}" if dup.message else note
         await apply_initial_score(dup, ctx.session)  # пересчёт балла с учётом нового обращения
+        # Цикл 10 (фикс ревью): если лид ещё холодный — повторно резолвим против клиентов.
+        # Контрагент/контакт могли появиться в MDM ПОСЛЕ создания лида; иначе действующий
+        # клиент навсегда остался бы «холодным» на повторных обращениях (ранний выход).
+        if not dup.customer_kind:
+            await resolve_customer(ctx.session, dup)
         logger.info("Leads: повторное обращение (%s) → дописано к лиду %s", source, dup.id)
         return
 
