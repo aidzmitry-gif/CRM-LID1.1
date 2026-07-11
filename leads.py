@@ -9,6 +9,7 @@ AI-пилот дорожной карты (Lead Qualifier & Router).
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,6 +176,36 @@ def lead_priority(score: int) -> str:
     if score >= QUALIFY_THRESHOLD:
         return "Средний"
     return "Низкий"
+
+
+# Рабочее окно лидоруба в НАИВНОМ UTC (как created_at/first_action_at): Минск 9-18 = UTC 6-15
+# (Беларусь живёт без перевода часов). Цикл 14: факт «Реакция» считается рабочими минутами —
+# иначе один ночной лид, разобранный в 9:05, сжигает метрику на весь день.
+WORKDAY_START_HOUR_UTC = 6
+WORKDAY_END_HOUR_UTC = 15
+
+
+def working_minutes_between(start: datetime, end: datetime) -> float:
+    """Минуты РАБОЧИМИ часами (9-18 Минска, ежедневно) между двумя наивными UTC-моментами.
+
+    Ночь не считается: лид, пришедший в 23:00 и разобранный в 9:10, ждал 10 рабочих
+    минут, а не 10 часов. Идём по дням, суммируя пересечение интервала с рабочим окном.
+    # ponytail: выходные считаются рабочими — отдел работает и по субботам; появится
+    # график смен — вынести окно в настройку. O(дней) — лиды свежие, норм.
+    """
+    if end <= start:
+        return 0.0
+    total = 0.0
+    cur = start
+    while cur < end:
+        day_start = cur.replace(hour=WORKDAY_START_HOUR_UTC, minute=0, second=0, microsecond=0)
+        day_end = cur.replace(hour=WORKDAY_END_HOUR_UTC, minute=0, second=0, microsecond=0)
+        seg_start = max(cur, day_start)
+        seg_end = min(end, day_end)
+        if seg_end > seg_start:
+            total += (seg_end - seg_start).total_seconds() / 60
+        cur = (cur + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return total
 
 
 async def known_customer(session: AsyncSession, company: str) -> bool:

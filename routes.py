@@ -32,6 +32,7 @@ from modules.leads.leads import (
     resolve_customer,
     route_lead,
     score_lead,
+    working_minutes_between,
 )
 from modules.leads.models import Lead, LeadAttachment, LeadItem, LeadPlan
 from modules.leads.schemas import (
@@ -495,7 +496,9 @@ async def _plan_facts(session: AsyncSession) -> tuple[int, int, int, int | None]
 
     «Сегодня» — наивный UTC-день (как ``created_at``/``first_action_at``). Обработано =
     первое действие сегодня; целевых передано = из них целевые, ушедшие в routed/converted;
-    доведено = converted_at сегодня; реакция = ср. (first_action_at − created_at) по обработанным.
+    доведено = converted_at сегодня; реакция = ср. (first_action_at − created_at) по обработанным
+    РАБОЧИМИ минутами (Цикл 14, ``working_minutes_between``) — ночной лид, разобранный
+    в 9:05, не сжигает метрику скорости на весь день.
     """
     start = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
@@ -511,7 +514,7 @@ async def _plan_facts(session: AsyncSession) -> tuple[int, int, int, int | None]
         1 for _, _, q, s in acted if q == "target" and s in ("routed", "converted")
     )
     reaction_mins = [
-        (fa - ca).total_seconds() / 60
+        working_minutes_between(ca, fa)
         for ca, fa, _, _ in acted
         if ca is not None and fa is not None and fa >= ca
     ]
