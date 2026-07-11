@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -251,6 +251,17 @@ async def _manager_loads(session: AsyncSession) -> dict[str, int]:
     return {name: n for name, n in rows}
 
 
+def _activity_in_window(since: datetime):
+    """Лид «в окне» отчёта, если в окне ЛЮБАЯ его активность — приём, передача или сделка.
+
+    Фикс ревью Ц16: окно только по ``created_at`` систематически теряло реанимированные
+    лиды (созданы 90+ дней назад, переданы/сконвертированы сегодня) — деньги исчезали из
+    скорборда передач, качества источников и баланса маршрутизации ровно на кейсе,
+    ради которого строился рецикл. У старых строк ``routed_at`` может быть NULL — тогда
+    работают остальные ветки, поведение до Ц13 не меняется."""
+    return or_(Lead.created_at >= since, Lead.routed_at >= since, Lead.converted_at >= since)
+
+
 async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[str, tuple[float, int]]:
     """История менеджеров (Цикл 8) → ``{имя: (конверсия, недавний объём)}``.
 
@@ -265,7 +276,10 @@ async def _manager_performance(session: AsyncSession, days: int = 90) -> dict[st
         await session.execute(
             select(Lead.assigned_to, assigned, converted)
             .where(
-                Lead.created_at >= since,
+                # Фикс ревью Ц16: окно по АКТИВНОСТИ, не только по created_at — иначе
+                # проснувшийся «не сейчас» лид (создан 90+ дней назад, передан сегодня)
+                # невидим для баланса нагрузки и истории конверсии.
+                _activity_in_window(since),
                 Lead.assigned_to != "",
                 Lead.status.in_(("routed", "converted")),
             )
@@ -403,7 +417,7 @@ async def source_stats(days: int = 30, session: AsyncSession = Depends(get_sessi
             )
             .select_from(Lead)
             .outerjoin(item_totals, item_totals.c.lead_id == Lead.id)
-            .where(Lead.created_at >= since)
+            .where(_activity_in_window(since))  # фикс ревью Ц16: видеть реанимированные
             .group_by(Lead.source, Lead.utm_campaign)
             .order_by(total.desc())
         )
@@ -469,7 +483,7 @@ async def handoff_stats(days: int = 30, session: AsyncSession = Depends(get_sess
             .select_from(Lead)
             .outerjoin(item_totals, item_totals.c.lead_id == Lead.id)
             .where(
-                Lead.created_at >= since,
+                _activity_in_window(since),  # фикс ревью Ц16: видеть реанимированные
                 Lead.assigned_to != "",
                 Lead.status.in_(("routed", "converted")),
             )
