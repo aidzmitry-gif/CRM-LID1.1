@@ -283,7 +283,27 @@ async def ping() -> dict:
 
 @router.get("", response_model=list[LeadOut])
 async def list_leads(status: str = "", session: AsyncSession = Depends(get_session)):
-    """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу)."""
+    """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу).
+
+    Цикл 16 — wake-on-read: отложенные «не сейчас» с наступившим ``snooze_until``
+    возвращаются в ``new`` прямо при чтении доски (без фонового job'а — просто и
+    надёжно; доску открывают десятки раз в день). ``snooze_until`` не чистим — по
+    прошедшей дате фронт рисует бейдж «⏰ проснулся».
+    """
+    woke = (
+        await session.execute(
+            select(Lead).where(
+                Lead.status == "rejected",
+                Lead.reject_reason == "не сейчас",
+                Lead.snooze_until.isnot(None),
+                Lead.snooze_until <= _utcnow(),
+            )
+        )
+    ).scalars().all()
+    if woke:
+        for lead in woke:
+            lead.status = "new"
+        await session.commit()
     query = select(Lead).order_by(Lead.id.desc())
     if status:
         query = query.where(Lead.status == status)
@@ -629,6 +649,10 @@ async def reject_lead(
 
     lead.status = "rejected"
     lead.reject_reason = payload.reason
+    if payload.reason == "не сейчас":
+        # Цикл 16 — рецикл: спрос не умер, а созревает. Лид вернётся в «Новые» сам
+        # (wake-on-read в list_leads), когда наступит дата — вместо вечной свалки.
+        lead.snooze_until = _utcnow() + timedelta(days=payload.snooze_days or 90)
     _mark_first_action(lead)
     core.event_bus.emit(
         session,

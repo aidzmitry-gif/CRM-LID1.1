@@ -74,6 +74,9 @@ class LeadOut(BaseModel):
     attempt_count: int = 0
     callback_at: datetime | None = None
     last_touch_at: datetime | None = None
+    # Рецикл «не сейчас» (Цикл 16): дата авто-возврата в «Новые»; у проснувшегося new-лида
+    # поле остаётся в прошлом — фронт рисует бейдж «⏰ проснулся» именно по нему.
+    snooze_until: datetime | None = None
 
 
 class LeadQualifyOut(BaseModel):
@@ -231,9 +234,13 @@ class AttemptIn(BaseModel):
 
 
 class RejectIn(BaseModel):
-    """Тело POST /reject: причина отказа — одна из ``REJECT_REASONS`` (leads.py)."""
+    """Тело POST /reject: причина отказа — одна из ``REJECT_REASONS`` (leads.py).
+
+    ``snooze_days`` (Цикл 16) — только для причины «не сейчас»: через сколько дней
+    лид сам вернётся в «Новые» (пресеты 30/90/180; без поля — 90)."""
 
     reason: str = Field(min_length=1)
+    snooze_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class LeadRejectOut(BaseModel):

@@ -88,6 +88,22 @@ async def on_call_logged(payload: dict, ctx) -> None:
             return  # известный контакт → обрабатывает sales (сделка/продавец)
     dup = await find_open_lead_by_phone(ctx.session, phone)
     if dup is not None:
+        # Фикс ревью Ц15: в событии звонка нет company — если открытых лидов с этим
+        # хвостом несколько у РАЗНЫХ компаний (общий коммутатор), дубль неоднозначен:
+        # не гадаем и не пишем «не тому» (тихий no-op, как до Цикла 15).
+        same_tail = (
+            await ctx.session.execute(
+                select(Lead).where(
+                    Lead.status.in_(("new", "qualified", "routed")),
+                    Lead.phone.isnot(None),
+                    Lead.phone.like(f"%{tail}"),
+                )
+            )
+        ).scalars().all()
+        companies = {c.company.strip().lower() for c in same_tail if (c.company or "").strip()}
+        if len(companies) > 1:
+            logger.info("Leads: повторный звонок с %s неоднозначен (компаний: %d) — пропуск", phone, len(companies))
+            return
         # Цикл 15: повторный звонок — самый горячий сигнал покупки, раньше исчезал
         # бесследно (голый return). Теперь след в message + метка касания → бейдж
         # «↑ повтор» и подъём лида на доске.
