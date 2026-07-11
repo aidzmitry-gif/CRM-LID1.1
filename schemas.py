@@ -146,6 +146,16 @@ class LeadItemOut(BaseModel):
     created_at: datetime
 
 
+class LeadBulkExpressOut(BaseModel):
+    """Результат «Разобрать целевых» (Цикл 6): POST /leads/express-bulk.
+
+    ``expressed`` — id распределённых лидов, ``skipped_non_target`` — сколько новых лидов
+    пропущено как нецелевые (их лидоруб разбирает вручную, не ошибка)."""
+
+    expressed: list[int]
+    skipped_non_target: int
+
+
 class RouteIn(BaseModel):
     """Опциональное тело POST /route: ручной выбор менеджера вместо авто-правил.
 

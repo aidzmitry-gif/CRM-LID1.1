@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import case, delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.runtime.core import Core
@@ -32,6 +33,7 @@ from modules.leads.models import Lead, LeadAttachment, LeadItem, LeadPlan
 from modules.leads.schemas import (
     LeadAttachmentIn,
     LeadAttachmentOut,
+    LeadBulkExpressOut,
     LeadConvertOut,
     LeadCreate,
     LeadItemIn,
@@ -335,7 +337,15 @@ async def _get_plan(session: AsyncSession) -> LeadPlan:
     if plan is None:
         plan = LeadPlan(period="daily")
         session.add(plan)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            # гонка первого создания строки нормы (uq_lead_plan_period) — другой запрос
+            # успел раньше; откатываем и перечитываем (тот же паттерн, что в sales/procurement).
+            await session.rollback()
+            plan = (
+                await session.execute(select(LeadPlan).where(LeadPlan.period == "daily"))
+            ).scalars().first()
     return plan
 
 
@@ -578,6 +588,41 @@ async def express_lead(
     await session.commit()
     (await _attach_item_totals(session, [lead]))
     return lead
+
+
+@router.post("/express-bulk", response_model=LeadBulkExpressOut)
+async def express_bulk(
+    core: Core = Depends(get_core),
+    session: AsyncSession = Depends(get_session),
+):
+    """Разобрать все целевые новые лиды одним действием (Цикл 6) — конвейер лидоруба.
+
+    Проходит по новым лидам: пересчитывает скоринг, целевые — квалифицирует и распределяет
+    авто-правилами (загрузка балансируется внутри пачки: ``_resolve_manager`` видит уже
+    распределённых через autoflush), нецелевые — пропускает (их разбирают вручную). Одна
+    транзакция вместо N кликов qualify→route по каждой карточке. Оба события шины эмитятся
+    на каждый распределённый лид — контракт тот же, что у одиночного /express.
+
+    ДО ``/{lead_id}/...`` в файле нарочно — ``express-bulk`` не должен пойматься как lead_id.
+    """
+    new_leads = (
+        await session.execute(select(Lead).where(Lead.status == "new").order_by(Lead.id))
+    ).scalars().all()
+    expressed: list[int] = []
+    skipped_non_target = 0
+    for lead in new_leads:
+        score, verdict, reason = await _compute_score(lead, session)
+        if verdict != "target":
+            skipped_non_target += 1
+            continue
+        _apply_score(lead, score, verdict, reason)
+        await _emit_qualified(lead, score, verdict, core, session)
+        manager, funnel = await _resolve_manager(lead, session, "")
+        _apply_route(lead, manager, funnel, None, None)
+        _emit_routed(lead, manager, funnel, False, core, session)
+        expressed.append(lead.id)
+    await session.commit()
+    return LeadBulkExpressOut(expressed=expressed, skipped_non_target=skipped_non_target)
 
 
 @router.post("/{lead_id}/convert", response_model=LeadConvertOut, status_code=201)
