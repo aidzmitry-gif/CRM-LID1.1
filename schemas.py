@@ -147,9 +147,11 @@ class LeadItemIn(BaseModel):
     sku_id: int
     sku_code: str = ""
     name: str = ""
-    qty: float = 1
-    price: float = 0
-    discount_pct: float = 0
+    # Границы денег: количество строго > 0 (нулевая позиция бессмысленна), цена >= 0,
+    # скидка 0..100% — иначе отрицательная цена/скидка исказила бы Σ КП в скорбордах денег.
+    qty: float = Field(default=1, gt=0)
+    price: float = Field(default=0, ge=0)
+    discount_pct: float = Field(default=0, ge=0, le=100)
 
 
 class LeadItemOut(BaseModel):

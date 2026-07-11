@@ -250,6 +250,19 @@ async def find_last_rejected_by_contact(
     return next((c for c in cands if not companies_conflict(c.company, company)), None)
 
 
+def cancel_pending_wake(prior_rej: Lead | None) -> bool:
+    """Погасить авто-возврат спящего «не сейчас» лида — контакт уже вернулся новым лидом.
+
+    Иначе спящий лид проснётся (wake-on-read) отдельной карточкой того же клиента: два
+    лидоруба звонят одному контакту (фантомный дубль, хвост ревью Ц16). Новый лид уже несёт
+    ``revived_from_id`` на этот отказ — память сохранена, а дубль-пробуждение отменяем.
+    Возвращает True, если что-то погашено (для лога/тестов)."""
+    if prior_rej is not None and prior_rej.reject_reason == "не сейчас" and prior_rej.snooze_until is not None:
+        prior_rej.snooze_until = None
+        return True
+    return False
+
+
 async def golden_counterparty_id(session: AsyncSession, cp_id: int) -> int:
     """Идти по цепочке ``merged_into_id`` до эталона (golden record) контрагента.
 

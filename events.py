@@ -74,7 +74,13 @@ async def on_call_logged(payload: dict, ctx) -> None:
     from sqlalchemy import select
 
     from core.domain.models import Contact
-    from modules.leads.leads import apply_initial_score, find_open_lead_by_phone, phone_tail
+    from modules.leads.leads import (
+        apply_initial_score,
+        cancel_pending_wake,
+        find_last_rejected_by_contact,
+        find_open_lead_by_phone,
+        phone_tail,
+    )
     from modules.leads.models import Lead
 
     tail = phone_tail(phone)
@@ -124,6 +130,12 @@ async def on_call_logged(payload: dict, ctx) -> None:
     ctx.session.add(lead)
     await apply_initial_score(lead, ctx.session)
     await ctx.session.flush()
+    # Тот же контакт мог получить отказ «не сейчас» и спать — гасим авто-возврат, чтобы
+    # звонок не породил фантомный дубль (спящий лид + этот). Память об отказе — revived_from_id.
+    prior_rej = await find_last_rejected_by_contact(ctx.session, phone, None)
+    if prior_rej is not None:
+        lead.revived_from_id = prior_rej.id
+        cancel_pending_wake(prior_rej)
     ctx.services.event_bus.emit(
         ctx.session,
         "leads.lead.received",
@@ -148,6 +160,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     from modules.leads.leads import (
         LEAD_SOURCES,
         apply_initial_score,
+        cancel_pending_wake,
         find_last_rejected_by_contact,
         find_open_lead_by_email,
         find_open_lead_by_phone,
@@ -207,6 +220,7 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     prior_rej = await find_last_rejected_by_contact(ctx.session, phone, email, company)
     if prior_rej is not None:
         lead.revived_from_id = prior_rej.id  # Цикл 12: память об отказе
+        cancel_pending_wake(prior_rej)  # контакт вернулся сам → спящий «не сейчас» не будит дубль
     ctx.services.event_bus.emit(
         ctx.session,
         "leads.lead.received",

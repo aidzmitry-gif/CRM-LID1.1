@@ -23,6 +23,7 @@ from modules.leads.leads import (
     MANAGERS,
     REJECT_REASONS,
     apply_initial_score,
+    cancel_pending_wake,
     choose_funnel,
     find_last_rejected_by_contact,
     find_open_lead_by_email,
@@ -366,6 +367,7 @@ async def create_lead(
     prior_rej = await find_last_rejected_by_contact(session, lead.phone, lead.email, lead.company)
     if prior_rej is not None:
         lead.revived_from_id = prior_rej.id  # Цикл 12: память об отказе
+        cancel_pending_wake(prior_rej)  # контакт вернулся сам → спящий «не сейчас» не будит дубль
     core.event_bus.emit(
         session,
         "leads.lead.received",
@@ -905,6 +907,10 @@ async def convert_lead(
             "lead_id": lead.id,
             "title": lead.product or (lead.message[:60] if lead.message else "") or "Лид",
             "counterparty": lead.company or lead.name or "Новый лид",
+            # Эталон контрагента из резолва (Цикл 10): sales-подписчик привязывает сделку к
+            # существующему клиенту, а не заводит дубль контрагента. Аддитивно — старый
+            # подписчик поле игнорирует (шов MDM, §2.4). NULL, если лид остался холодным.
+            "counterparty_id": lead.counterparty_id,
             "owner": lead.assigned_to,
             "priority": lead_priority(lead.score),
             "items": items,
