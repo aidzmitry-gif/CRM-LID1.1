@@ -314,7 +314,7 @@ async def create_lead(
     await apply_initial_score(lead, session)  # балл сразу на входе, статус остаётся new
     await session.flush()
     await resolve_customer(session, lead)  # Цикл 10: резолв против существующих клиентов
-    prior_rej = await find_last_rejected_by_contact(session, lead.phone, lead.email)
+    prior_rej = await find_last_rejected_by_contact(session, lead.phone, lead.email, lead.company)
     if prior_rej is not None:
         lead.revived_from_id = prior_rej.id  # Цикл 12: память об отказе
     core.event_bus.emit(

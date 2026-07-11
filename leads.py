@@ -191,13 +191,14 @@ async def known_customer(session: AsyncSession, company: str) -> bool:
 
 
 async def find_last_rejected_by_contact(
-    session: AsyncSession, phone: str | None, email: str | None
+    session: AsyncSession, phone: str | None, email: str | None, company: str | None = None
 ) -> Lead | None:
     """Последний ОТКЛОНЁННЫЙ лид того же контакта (телефон-хвост/e-mail) — реанимация (Цикл 12).
 
     Чтобы новый лид от ранее отклонённого контакта не терял память об отказе: продавец видит,
     что уже был отказ и его причину, а не работает вслепую. Терминальные rejected в дедуп
-    открытых лидов не попадают — ищем их отдельно, самый свежий.
+    открытых лидов не попадают — ищем их отдельно, самый свежий. ``company`` — тот же гард, что
+    в дедупе: отказ ДРУГОЙ компании с общим телефоном не приписываем (иначе ложный «был отказ»).
     """
     tail = phone_tail(phone)
     email_n = (email or "").strip().lower()
@@ -208,11 +209,12 @@ async def find_last_rejected_by_contact(
         conds.append(and_(Lead.email.isnot(None), func.lower(Lead.email) == email_n))
     if not conds:
         return None
-    return (
+    cands = (
         await session.execute(
             select(Lead).where(Lead.status == "rejected", or_(*conds)).order_by(Lead.id.desc())
         )
-    ).scalars().first()
+    ).scalars().all()
+    return next((c for c in cands if not companies_conflict(c.company, company)), None)
 
 
 async def golden_counterparty_id(session: AsyncSession, cp_id: int) -> int:
@@ -319,19 +321,22 @@ async def find_open_lead_by_phone(
     tail = phone_tail(phone)
     if not tail:
         return None
-    # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс
-    cand = (
+    # ponytail: LIKE-скан по хвосту — при росте базы нормализованная колонка + индекс.
+    # Берём ВСЕХ кандидатов и первого совместимого по компании (самого свежего): один хвост
+    # может быть у лидов разных фирм (общий коммутатор) — .first() мог бы вернуть чужого и
+    # ложно решить «не дубль», заведя дубль своей же компании.
+    cands = (
         await session.execute(
-            select(Lead).where(
+            select(Lead)
+            .where(
                 Lead.phone.isnot(None),
                 Lead.phone.like(f"%{tail}"),
                 Lead.status.in_(OPEN_STATUSES),
             )
+            .order_by(Lead.id.desc())
         )
-    ).scalars().first()
-    if cand is not None and companies_conflict(cand.company, company):
-        return None
-    return cand
+    ).scalars().all()
+    return next((c for c in cands if not companies_conflict(c.company, company)), None)
 
 
 async def find_open_lead_by_email(
@@ -344,17 +349,18 @@ async def find_open_lead_by_email(
     email = (email or "").strip().lower()
     if not email:
         return None
-    cand = (
+    cands = (
         await session.execute(
-            select(Lead).where(
+            select(Lead)
+            .where(
                 Lead.email.isnot(None),
                 # точное сравнение, НЕ ilike: в LIKE-паттерне `_`/`%` — wildcard'ы,
                 # а `_` в адресах сплошь и рядом (ivan_petrov@) → ложные дубли
                 func.lower(Lead.email) == email,
                 Lead.status.in_(OPEN_STATUSES),
             )
+            .order_by(Lead.id.desc())
         )
-    ).scalars().first()
-    if cand is not None and companies_conflict(cand.company, company):
-        return None
-    return cand
+    ).scalars().all()
+    # как в find_open_lead_by_phone: первый совместимый по компании, не .first() вслепую
+    return next((c for c in cands if not companies_conflict(c.company, company)), None)
