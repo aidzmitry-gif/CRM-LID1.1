@@ -308,14 +308,14 @@ async def ping() -> dict:
     return {"module": "leads", "status": "ok"}
 
 
-@router.get("", response_model=list[LeadOut], dependencies=_READ)
-async def list_leads(status: str = "", session: AsyncSession = Depends(get_session)):
-    """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу).
+async def _wake_due_snoozed(session: AsyncSession) -> None:
+    """Wake-on-read: отложенные «не сейчас» с наступившим ``snooze_until`` → обратно в «Новые».
 
-    Цикл 16 — wake-on-read: отложенные «не сейчас» с наступившим ``snooze_until``
-    возвращаются в ``new`` прямо при чтении доски (без фонового job'а — просто и
-    надёжно; доску открывают десятки раз в день). ``snooze_until`` не чистим — по
-    прошедшей дате фронт рисует бейдж «⏰ проснулся».
+    Без фонового job'а (доску/лид открывают десятки раз в день — просто и надёжно). Лид
+    просыпается как СВЕЖИЙ новый: чистим маршрутные хвосты прошлой жизни (``assigned_to``/
+    ``funnel``/``callback_at``) — иначе проснувшийся показывал бы старого продавца и просроченный
+    перезвон. ``snooze_until`` НЕ чистим — по прошедшей дате фронт рисует бейдж «⏰ проснулся».
+    Общий хелпер для ``list_leads`` и ``get_lead`` (кокпит/точечный fetch тоже будит).
     """
     woke = (
         await session.execute(
@@ -327,10 +327,24 @@ async def list_leads(status: str = "", session: AsyncSession = Depends(get_sessi
             )
         )
     ).scalars().all()
-    if woke:
-        for lead in woke:
-            lead.status = "new"
-        await session.commit()
+    if not woke:
+        return
+    for lead in woke:
+        lead.status = "new"
+        lead.assigned_to = ""
+        lead.funnel = ""
+        lead.callback_at = None
+    await session.commit()
+
+
+@router.get("", response_model=list[LeadOut], dependencies=_READ)
+async def list_leads(status: str = "", session: AsyncSession = Depends(get_session)):
+    """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу).
+
+    Цикл 16 — wake-on-read (``_wake_due_snoozed``): отложенные «не сейчас» с наступившим
+    сроком возвращаются в ``new`` прямо при чтении доски.
+    """
+    await _wake_due_snoozed(session)
     query = select(Lead).order_by(Lead.id.desc())
     if status:
         query = query.where(Lead.status == status)
@@ -619,7 +633,8 @@ async def set_plan(payload: LeadPlanIn, session: AsyncSession = Depends(get_sess
 
 @router.get("/{lead_id}", response_model=LeadOut, dependencies=_READ)
 async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
-    """Один лид по id."""
+    """Один лид по id (кокпит/точечный fetch). Тоже будит созревшие «не сейчас» (wake-on-read)."""
+    await _wake_due_snoozed(session)
     lead = await session.get(Lead, lead_id)
     if lead is None:
         raise HTTPException(status_code=404, detail="Лид не найден")
@@ -713,12 +728,15 @@ async def log_attempt(
         raise HTTPException(
             status_code=409, detail=f"Недозвон фиксируется до передачи, статус: {lead.status}"
         )
-    lead.attempt_count += 1
+    # SQL-инкремент на стороне БД (attempt_count = attempt_count + 1) — без гонки
+    # read-modify-write: две быстрые попытки не затрут друг друга «оба +1 к одному числу».
+    lead.attempt_count = Lead.attempt_count + 1
     lead.callback_at = (
         payload.callback_at if payload and payload.callback_at else _utcnow() + timedelta(hours=2)
     )
     _mark_first_action(lead)
     await session.commit()
+    await session.refresh(lead)  # подтянуть посчитанный БД attempt_count (был SQL-выражением)
     (await _attach_item_totals(session, [lead]))
     return lead
 

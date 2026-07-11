@@ -3,25 +3,55 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from modules.leads.leads import LEAD_SOURCES
 
 
 class LeadCreate(BaseModel):
-    """Приём лида из канала (сайт/мессенджер/e-mail/телефония/тендер)."""
+    """Приём лида из канала (сайт/мессенджер/e-mail/телефония/тендер).
+
+    Границы приёма (ручной POST /leads и API-клиенты): длины полей ограничены под
+    колонки БД (иначе 500 на вставке при переполнении String(N)), источник приводится
+    к известному каналу, телефон/e-mail нормализуются (обрезка пробелов, e-mail в
+    нижний регистр) — грязный ввод из веб-форм/импорта не роняет вставку и не плодит
+    «Ivan@x» / «ivan@x » как разные контакты в дедупе."""
 
     source: str = "site"  # site|telegram|whatsapp|email|phone|tender
-    name: str = ""
-    company: str = ""
-    phone: str | None = None
-    email: str | None = None
-    region: str = ""
-    product: str = ""
-    message: str = ""
+    name: str = Field(default="", max_length=255)
+    company: str = Field(default="", max_length=255)
+    phone: str | None = Field(default=None, max_length=64)
+    email: str | None = Field(default=None, max_length=128)
+    region: str = Field(default="", max_length=64)
+    product: str = Field(default="", max_length=128)
+    message: str = Field(default="", max_length=4000)
     # UTM-атрибуция (Цикл 4) — опционально: ручной интейк редко её знает, но API-клиент
     # (например, кампания с прямой публикацией лида) может передать сразу.
-    utm_source: str = ""
-    utm_medium: str = ""
-    utm_campaign: str = ""
+    utm_source: str = Field(default="", max_length=128)
+    utm_medium: str = Field(default="", max_length=128)
+    utm_campaign: str = Field(default="", max_length=128)
+
+    @field_validator("source")
+    @classmethod
+    def _known_source(cls, v: str) -> str:
+        # неизвестный канал → «site» (как в интейке on_intake_lead) — не роняем приём из-за опечатки
+        return v if v in LEAD_SOURCES else "site"
+
+    # mode="before" — нормализуем ДО проверки max_length, иначе избыточный паддинг
+    # (пробелы) ронял бы длину за лимит ещё до strip (ровно та «гигиена входа», что и цель).
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _clean_phone(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return str(v).strip() or None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _clean_email(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return str(v).strip().lower() or None
 
 
 class LeadOut(BaseModel):
