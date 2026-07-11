@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
+from core.services.auth import require_permission
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import (
     MANAGERS,
@@ -66,6 +67,16 @@ from modules.leads.storage import (
 )
 
 router = APIRouter(tags=["leads"])
+
+# RBAC (SECURITY.md, fail-closed через core.services.auth): доступ к вводу воронки —
+# только сотрудникам с правом, а не анониму/чужому отделу (ПДн клиентов, конвертация,
+# вложения). Уровни прав из permissions.py: read (смотреть), write (приём/квалификация/
+# правка), route (распределение/конвертация). Навешиваем через ``dependencies=`` на роут —
+# возвращаемое значение не нужно, только гейт 403. Списки переиспользуются между роутами
+# (FastAPI копирует их при декорировании — общий объект безопасен).
+_READ = [Depends(require_permission("leads.lead.read"))]
+_WRITE = [Depends(require_permission("leads.lead.write"))]
+_ROUTE = [Depends(require_permission("leads.lead.route"))]
 
 
 def _utcnow() -> datetime:
@@ -295,7 +306,7 @@ async def ping() -> dict:
     return {"module": "leads", "status": "ok"}
 
 
-@router.get("", response_model=list[LeadOut])
+@router.get("", response_model=list[LeadOut], dependencies=_READ)
 async def list_leads(status: str = "", session: AsyncSession = Depends(get_session)):
     """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу).
 
@@ -325,7 +336,7 @@ async def list_leads(status: str = "", session: AsyncSession = Depends(get_sessi
     return await _attach_item_totals(session, leads)
 
 
-@router.post("", response_model=LeadOut, status_code=201)
+@router.post("", response_model=LeadOut, status_code=201, dependencies=_WRITE)
 async def create_lead(
     payload: LeadCreate,
     core: Core = Depends(get_core),
@@ -372,7 +383,7 @@ async def create_lead(
     return lead
 
 
-@router.get("/managers", response_model=list[ManagerOut])
+@router.get("/managers", response_model=list[ManagerOut], dependencies=_READ)
 async def list_managers(session: AsyncSession = Depends(get_session)):
     """Менеджеры для ручной раздачи: специализация (гео/продукт) + текущая загрузка.
 
@@ -386,7 +397,7 @@ async def list_managers(session: AsyncSession = Depends(get_session)):
     ]
 
 
-@router.get("/stats/sources", response_model=list[LeadSourceStatOut])
+@router.get("/stats/sources", response_model=list[LeadSourceStatOut], dependencies=_READ)
 async def source_stats(days: int = 30, session: AsyncSession = Depends(get_session)):
     """Отчёт качества источника/кампании (Цикл 4) — за последние ``days`` дней.
 
@@ -454,7 +465,7 @@ def _lead_item_totals_subquery():
     )
 
 
-@router.get("/stats/handoffs", response_model=list[LeadHandoffStatOut])
+@router.get("/stats/handoffs", response_model=list[LeadHandoffStatOut], dependencies=_READ)
 async def handoff_stats(days: int = 30, session: AsyncSession = Depends(get_session)):
     """Скорборд передач лидоруба продавцам (Цикл 7) — за последние ``days`` дней.
 
@@ -576,7 +587,7 @@ def _plan_out(plan: LeadPlan, facts: tuple[int, int, int, int | None]) -> LeadPl
     )
 
 
-@router.get("/plan", response_model=LeadPlanOut)
+@router.get("/plan", response_model=LeadPlanOut, dependencies=_READ)
 async def get_plan(session: AsyncSession = Depends(get_session)):
     """План/факт лидоруба за сегодня (Цикл 5): дневная норма + факт из лидов.
 
@@ -589,7 +600,7 @@ async def get_plan(session: AsyncSession = Depends(get_session)):
     return _plan_out(plan, facts)
 
 
-@router.put("/plan", response_model=LeadPlanOut)
+@router.put("/plan", response_model=LeadPlanOut, dependencies=_WRITE)
 async def set_plan(payload: LeadPlanIn, session: AsyncSession = Depends(get_session)):
     """Задать дневную норму лидоруба (Цикл 5) — правит РОП/лидоруб; факт пересчитывается."""
     plan = await _get_plan(session)
@@ -603,7 +614,7 @@ async def set_plan(payload: LeadPlanIn, session: AsyncSession = Depends(get_sess
     return _plan_out(plan, facts)
 
 
-@router.get("/{lead_id}", response_model=LeadOut)
+@router.get("/{lead_id}", response_model=LeadOut, dependencies=_READ)
 async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
     """Один лид по id."""
     lead = await session.get(Lead, lead_id)
@@ -613,7 +624,7 @@ async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
     return lead
 
 
-@router.post("/{lead_id}/qualify", response_model=LeadQualifyOut)
+@router.post("/{lead_id}/qualify", response_model=LeadQualifyOut, dependencies=_WRITE)
 async def qualify(
     lead_id: int,
     core: Core = Depends(get_core),
@@ -640,7 +651,7 @@ async def qualify(
     )
 
 
-@router.post("/{lead_id}/reject", response_model=LeadRejectOut)
+@router.post("/{lead_id}/reject", response_model=LeadRejectOut, dependencies=_WRITE)
 async def reject_lead(
     lead_id: int,
     payload: RejectIn,
@@ -677,7 +688,7 @@ async def reject_lead(
     return LeadRejectOut(id=lead.id, status=lead.status, reject_reason=lead.reject_reason)
 
 
-@router.post("/{lead_id}/attempt", response_model=LeadOut)
+@router.post("/{lead_id}/attempt", response_model=LeadOut, dependencies=_WRITE)
 async def log_attempt(
     lead_id: int,
     payload: AttemptIn | None = Body(default=None),
@@ -709,7 +720,7 @@ async def log_attempt(
     return lead
 
 
-@router.post("/{lead_id}/route", response_model=LeadRouteOut)
+@router.post("/{lead_id}/route", response_model=LeadRouteOut, dependencies=_ROUTE)
 async def route(
     lead_id: int,
     payload: RouteIn | None = Body(default=None),
@@ -753,7 +764,7 @@ async def route(
     )
 
 
-@router.post("/{lead_id}/express", response_model=LeadOut)
+@router.post("/{lead_id}/express", response_model=LeadOut, dependencies=_ROUTE)
 async def express_lead(
     lead_id: int,
     payload: RouteIn | None = Body(default=None),
@@ -807,7 +818,7 @@ async def express_lead(
     return lead
 
 
-@router.post("/express-bulk", response_model=LeadBulkExpressOut)
+@router.post("/express-bulk", response_model=LeadBulkExpressOut, dependencies=_ROUTE)
 async def express_bulk(
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
@@ -844,7 +855,7 @@ async def express_bulk(
     return LeadBulkExpressOut(expressed=expressed, skipped_non_target=skipped_non_target)
 
 
-@router.post("/{lead_id}/convert", response_model=LeadConvertOut, status_code=201)
+@router.post("/{lead_id}/convert", response_model=LeadConvertOut, status_code=201, dependencies=_ROUTE)
 async def convert_lead(
     lead_id: int,
     core: Core = Depends(get_core),
@@ -903,7 +914,7 @@ async def convert_lead(
     return LeadConvertOut(lead_id=lead.id, status=lead.status)
 
 
-@router.post("/{lead_id}/attachments", response_model=LeadAttachmentOut, status_code=201)
+@router.post("/{lead_id}/attachments", response_model=LeadAttachmentOut, status_code=201, dependencies=_WRITE)
 async def upload_attachment(
     lead_id: int,
     payload: LeadAttachmentIn,
@@ -939,14 +950,14 @@ async def upload_attachment(
     return attachment
 
 
-@router.get("/{lead_id}/items", response_model=list[LeadItemOut])
+@router.get("/{lead_id}/items", response_model=list[LeadItemOut], dependencies=_READ)
 async def list_items(lead_id: int, session: AsyncSession = Depends(get_session)):
     """Позиции подобранного КП лида (корзина каталог-пикера)."""
     query = select(LeadItem).where(LeadItem.lead_id == lead_id).order_by(LeadItem.id)
     return (await session.execute(query)).scalars().all()
 
 
-@router.put("/{lead_id}/items", response_model=list[LeadItemOut])
+@router.put("/{lead_id}/items", response_model=list[LeadItemOut], dependencies=_WRITE)
 async def replace_items(
     lead_id: int,
     payload: list[LeadItemIn],
@@ -982,7 +993,7 @@ async def replace_items(
     return (await session.execute(query)).scalars().all()
 
 
-@router.post("/{lead_id}/link-contact", response_model=LinkContactOut)
+@router.post("/{lead_id}/link-contact", response_model=LinkContactOut, dependencies=_WRITE)
 async def link_contact(
     lead_id: int,
     payload: LinkContactIn | None = Body(default=None),
@@ -1031,7 +1042,7 @@ async def link_contact(
     )
 
 
-@router.get("/{lead_id}/attachments", response_model=list[LeadAttachmentOut])
+@router.get("/{lead_id}/attachments", response_model=list[LeadAttachmentOut], dependencies=_READ)
 async def list_attachments(lead_id: int, session: AsyncSession = Depends(get_session)):
     """Список вложений лида (без байтов — метаданные; скачать — отдельным эндпоинтом)."""
     query = (
@@ -1042,7 +1053,7 @@ async def list_attachments(lead_id: int, session: AsyncSession = Depends(get_ses
     return (await session.execute(query)).scalars().all()
 
 
-@router.get("/{lead_id}/attachments/{attachment_id}/download")
+@router.get("/{lead_id}/attachments/{attachment_id}/download", dependencies=_READ)
 async def download_attachment(
     lead_id: int,
     attachment_id: int,
