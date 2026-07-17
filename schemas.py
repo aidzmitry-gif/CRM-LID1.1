@@ -135,9 +135,9 @@ class LeadRouteOut(BaseModel):
 class LeadConvertOut(BaseModel):
     """Результат конвертации лида.
 
-    Сделку создаёт модуль sales (репозиторий CRM) по событию
-    ``leads.lead.converted``; ``deal_id`` проставляется лиду асинхронно
-    обработчиком ответного ``sales.deal.created``.
+    Сделку создаёт модуль sales по ``leads.lead.converted``; роут ``convert``
+    синхронно relay'ит outbox, поэтому ``deal_id`` обычно уже в ответе.
+    ``None`` — только если подписчик sales недоступен (тогда догонит фоновый relay).
     """
 
     lead_id: int
