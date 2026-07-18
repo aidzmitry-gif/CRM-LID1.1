@@ -23,5 +23,8 @@ PERMISSIONS = [
 ROLES = [
     Role("sales_head", ("leads.lead.read", "leads.lead.write", "leads.lead.route")),
     Role("sales", ("leads.lead.read", "leads.lead.write", "leads.lead.route")),
+    # Keycloak realm role (go-live L0): те же права, что у sales — иначе менеджер видит 403
+    # на route/convert при OIDC, хотя «Лиды» в меню доступны.
+    Role("sales_manager", ("leads.lead.read", "leads.lead.write", "leads.lead.route")),
     Role("sales_cli", ("leads.lead.read", "leads.lead.write")),
 ]

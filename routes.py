@@ -18,6 +18,7 @@ from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from core.services.auth import require_permission
+from core.services.eventbus import EventContext
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import (
     MANAGERS,
@@ -886,8 +887,10 @@ async def convert_lead(
 
     Сделку создаёт модуль sales (репозиторий CRM): он подписан на это событие,
     создаёт ``Deal`` (стадия ``new``, ответственный = назначенный менеджер,
-    приоритет по баллу) и отвечает ``sales.deal.created`` с ``lead_id``/``deal_id`` —
-    обработчик ``events.on_deal_created_from_lead`` проставит лиду ссылку.
+    приоритет по баллу, позиции КП из ``items``) и отвечает ``sales.deal.created``
+    с ``lead_id``/``deal_id`` — обработчик ``events.on_deal_created_from_lead``
+    проставит лиду ссылку. Outbox доставляем в этом же запросе, чтобы UI сразу
+    получил ``deal_id`` (денежный путь L4: лид→сделка без «converted без сделки»).
     Требует предварительного распределения (иначе 409).
     """
     lead = await session.get(Lead, lead_id)
@@ -900,8 +903,7 @@ async def convert_lead(
 
     lead.status = "converted"
     lead.converted_at = _utcnow()  # момент конвертации — для дневного план/факта (Цикл 5)
-    # Позиции подобранного КП — в payload события (аддитивно: подписчик sales со старым
-    # контрактом их игнорирует; перенос позиций в сделку делает фронт цепочкой «В сделку + счёт»).
+    # Позиции КП — в payload; sales.on_lead_converted переносит их в DealItem + amount.
     item_rows = (
         await session.execute(
             select(LeadItem).where(LeadItem.lead_id == lead.id).order_by(LeadItem.id)
@@ -936,7 +938,16 @@ async def convert_lead(
         },
     )
     await session.commit()
-    return LeadConvertOut(lead_id=lead.id, status=lead.status)
+    # Синхронный relay: converted → Deal → deal.created → lead.deal_id (обычно 2 тика).
+    ctx = EventContext(session, core.services)
+    for _ in range(5):
+        n = await core.event_bus.relay_once(session, ctx)
+        await session.refresh(lead)
+        if lead.deal_id is not None:
+            break
+        if n == 0:
+            break
+    return LeadConvertOut(lead_id=lead.id, status=lead.status, deal_id=lead.deal_id)
 
 
 @router.post("/{lead_id}/attachments", response_model=LeadAttachmentOut, status_code=201, dependencies=_WRITE)
