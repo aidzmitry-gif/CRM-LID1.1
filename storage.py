@@ -9,23 +9,18 @@
 """
 from __future__ import annotations
 
-import base64
-import binascii
 import os
 import re
 import uuid
 from pathlib import Path
 
+from core.services import intake_storage
+from core.services.intake_storage import AttachmentRejected
+
 # Разрешённые типы вложений заявки: документы + сканы. Список сознательно
 # короткий — расширять по запросу, не «на всякий случай».
-ALLOWED_CONTENT_TYPES: dict[str, str] = {
-    "application/pdf": ".pdf",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-}
-MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 МБ — скан/xlsx с запасом, не видеофайл
+ALLOWED_CONTENT_TYPES = intake_storage.ALLOWED_CONTENT_TYPES
+MAX_SIZE_BYTES = intake_storage.MAX_SIZE_BYTES  # 10 МБ — скан/xlsx с запасом, не видеофайл
 # Потолок длины base64-строки под MAX_SIZE_BYTES: base64 раздувает данные в ~4/3.
 # Нужен, чтобы отсечь огромный data_url ДО b64decode (которое материализует всю
 # строку в память) — иначе злонамеренный/случайный мегабайтный ввод проедает RAM
@@ -36,10 +31,6 @@ _DATA_DIR = Path(os.getenv("AIOS_LEADS_DATA_DIR", "./data/leads/attachments"))
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-class AttachmentRejected(ValueError):
-    """Вложение не прошло проверку границы доверия (тип/размер/формат)."""
-
-
 def _sanitize_filename(filename: str) -> str:
     name = Path(filename).name.strip() or "file"
     return _SAFE_NAME_RE.sub("_", name)[:120]
@@ -47,17 +38,7 @@ def _sanitize_filename(filename: str) -> str:
 
 def decode_data_url(data_url: str) -> tuple[str, bytes]:
     """``data:<mime>;base64,<...>`` → (mime, байты). Кидает ``AttachmentRejected``."""
-    m = re.match(r"^data:([^;]+);base64,(.+)$", data_url, re.DOTALL)
-    if not m:
-        raise AttachmentRejected("Ожидался data-URI вида data:<mime>;base64,<...>")
-    content_type, b64 = m.group(1), m.group(2)
-    if len(b64) > _MAX_B64_CHARS:
-        raise AttachmentRejected(f"Файл больше {MAX_SIZE_BYTES // (1024 * 1024)} МБ")
-    try:
-        data = base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise AttachmentRejected("Некорректный base64") from exc
-    return content_type, data
+    return intake_storage.decode_data_url(data_url, _MAX_B64_CHARS)
 
 
 def save_attachment(lead_id: int, filename: str, content_type: str, data: bytes) -> tuple[str, int]:
@@ -80,14 +61,8 @@ def save_attachment(lead_id: int, filename: str, content_type: str, data: bytes)
     if not unique.endswith(ext):
         unique = f"{unique}{ext}"
 
-    lead_dir = _DATA_DIR / str(lead_id)
-    lead_dir.mkdir(parents=True, exist_ok=True)
-    final_path = lead_dir / unique
-    tmp_path = final_path.with_suffix(final_path.suffix + ".part")
-    tmp_path.write_bytes(data)
-    os.replace(tmp_path, final_path)
-
     storage_path = str(Path(str(lead_id)) / unique)
+    intake_storage.durable_write(_DATA_DIR, storage_path, data)
     return storage_path, size
 
 

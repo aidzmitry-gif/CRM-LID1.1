@@ -155,6 +155,11 @@ async def on_intake_lead(payload: dict, ctx) -> None:
     Дедуп: открытый лид с тем же телефоном/e-mail — новый лид не создаём, а
     дописываем обращение к существующему (без нового события: он и так на виду).
     """
+    if "receipt_id" in payload:
+        if ctx is None:
+            raise RuntimeError("Receipt delivery requires a transactional context")
+        await _on_intake_receipt(payload["receipt_id"], ctx)
+        return
     if ctx is None:
         return
     from modules.leads.leads import (
@@ -235,6 +240,212 @@ async def on_intake_lead(payload: dict, ctx) -> None:
         },
     )
     logger.info("Leads: интейк (%s) → лид %s", source, lead.id)
+
+
+async def on_intake_receipt_check(payload: dict, ctx) -> None:
+    """Read-only query through the core bus; no emits or domain state changes.
+
+    Fail closed unless every promised row still belongs to the existing lead and
+    every promised byte is present. Share locks keep checked rows stable for the
+    request transaction on PostgreSQL; a caller must start with verified=False.
+    """
+    from sqlalchemy import select
+
+    from core.domain.models import IntakeIdentity, IntakeReceipt
+    from core.services import intake_storage
+    from modules.leads.models import Lead, LeadAttachment
+
+    payload["verified"] = False
+    if ctx is None:
+        return
+    receipt = await ctx.session.get(IntakeReceipt, payload.get("receipt_id"), populate_existing=True)
+    if receipt is None or receipt.status != "delivered":
+        return
+    identity = await ctx.session.get(IntakeIdentity, receipt.identity_id, populate_existing=True)
+    if identity is None or identity.lead_id is None:
+        return
+    lead_id = await ctx.session.scalar(select(Lead.id).where(
+        Lead.id == identity.lead_id,
+    ).with_for_update(read=True))
+    if lead_id is None:
+        return
+    expected = receipt.payload.get("files", [])
+    if len(expected) != len(receipt.files):
+        return
+    expected_by_id = {item["file_id"]: item for item in expected}
+    attachment_ids = [item.get("attachment_id") for item in receipt.files]
+    if any(value is None for value in attachment_ids) or len(set(attachment_ids)) != len(attachment_ids):
+        return
+    rows = (await ctx.session.scalars(select(LeadAttachment).where(
+        LeadAttachment.id.in_(attachment_ids), LeadAttachment.lead_id == lead_id,
+    ).with_for_update(read=True).execution_options(populate_existing=True))).all()
+    if len(rows) != len(attachment_ids):
+        return
+    by_id = {row.id: row for row in rows}
+    for item in receipt.files:
+        promised = expected_by_id.get(item["file_id"])
+        if promised is None or any(item.get(key) != value for key, value in promised.items()):
+            return
+        row = by_id[item["attachment_id"]]
+        if any(getattr(row, key) != item[key] for key in (
+            "filename", "content_type", "size_bytes", "storage_path",
+        )):
+            return
+        intake_storage.verify_file(intake_storage.attachment_root(), item)
+    payload["verified"] = True
+
+
+async def _intake_manages_customer(session, lead) -> bool:
+    """Only replace a binding demonstrably left by the previous intake delivery.
+
+    The existing lead schema has no manual/auto flag. Record our result in the
+    transactional domain event, separate from the immutable input receipt. A
+    different current value, an absent marker or an already external binding is
+    preserved. A manual write of exactly the same values is not observable in
+    this schema; there is currently no manual binding setter in the leads API.
+    """
+    from sqlalchemy import select
+
+    from core.domain.models import OutboxEvent
+
+    event = (await session.execute(select(OutboxEvent).where(
+        OutboxEvent.event_type.in_(("leads.lead.received", "leads.lead.intake_updated")),
+        OutboxEvent.payload["lead_id"].as_integer() == lead.id,
+        OutboxEvent.payload["receipt_id"].as_string().is_not(None),
+    ).order_by(OutboxEvent.id.desc()).limit(1))).scalar_one_or_none()
+    binding = event.payload.get("customer_binding", {}) if event else {}
+    return bool(
+        binding.get("managed") is True
+        and binding.get("counterparty_id") == lead.counterparty_id
+        and binding.get("customer_kind") == lead.customer_kind
+    )
+
+
+async def _on_intake_receipt(receipt_id: str, ctx) -> None:
+    """Process one inbox entry, isolating its failure from unrelated relay events.
+
+    No commits here: the relay commits the lead, attachments, receipt and domain
+    event together. A failed savepoint leaves a durable failed receipt for retry
+    by the authenticated producer, without marking it as delivered.
+    """
+    from sqlalchemy import select, update
+
+    from core.domain.models import IntakeIdentity, IntakeReceipt
+    from core.services import intake_storage
+    from modules.leads.leads import apply_initial_score, resolve_customer
+    from modules.leads.models import Lead, LeadAttachment
+
+    session = ctx.session
+    receipt = await session.get(IntakeReceipt, receipt_id)
+    if receipt is None:
+        # An orphan event must not poison the global relay; it cannot yield a receipt.
+        logger.error("Intake event references missing receipt %s", receipt_id)
+        return
+    identity = (await session.execute(select(IntakeIdentity).where(
+        IntakeIdentity.id == receipt.identity_id,
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+    receipt = (await session.execute(select(IntakeReceipt).where(
+        IntakeReceipt.id == receipt_id,
+    ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+    if receipt.status != "queued":
+        return
+    if session.get_bind().dialect.name == "sqlite":
+        # SQLite ignores FOR UPDATE and may otherwise release the first SAVEPOINT
+        # as a commit. Begin its write transaction before the per-receipt savepoint.
+        await session.execute(update(IntakeReceipt).where(IntakeReceipt.id == receipt_id).values(
+            updated_at=IntakeReceipt.updated_at,
+        ))
+    try:
+        async with session.begin_nested():
+            for item in receipt.files:
+                intake_storage.verify_file(intake_storage.attachment_root(), item)
+            data = receipt.payload
+            fields = dict(data["lead"])
+            fields.pop("landing_url", None)  # Attribution belongs to the domain event.
+            text = fields.pop("message", "")
+            provenance = (
+                f"Источник: {receipt.namespace}; ID: {identity.source_id}; "
+                f"доставка: {receipt.delivery_id}"
+            )
+            message = "\n".join(filter(None, (
+                provenance, data.get("source_url"), data.get("subject"), text,
+            )))
+            source = {
+                "admin@enersys.by": "email", "zakupki.legat.by": "tender",
+            }.get(identity.namespace, "site")
+            # Ordinary lead editors do not acquire the intake identity lock.
+            # Refresh and lock their row before comparing our binding evidence.
+            lead = await session.get(
+                Lead, identity.lead_id, with_for_update=True, populate_existing=True,
+            ) if identity.lead_id else None
+            if identity.lead_id and lead is None:
+                raise ValueError("The linked lead no longer exists")
+            created = lead is None
+            managed_binding = created or await _intake_manages_customer(session, lead)
+            previous_contacts = (lead.phone, lead.email, lead.company) if lead else None
+            if created:
+                lead = Lead(**fields, source=source, message=message, status="new")
+                session.add(lead)
+                await session.flush()
+                identity.lead_id = lead.id
+            else:
+                lead.message = f"{lead.message}\n---\n{message}" if lead.message else message
+                lead.last_touch_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                for key, value in fields.items():
+                    # A mail copy can arrive first; the direct site record owns
+                    # its contact fields. Copies only fill fields still missing.
+                    if value and (receipt.namespace == identity.namespace or not getattr(lead, key)):
+                        setattr(lead, key, value)
+            await apply_initial_score(lead, session)
+            authoritative_change = (
+                receipt.namespace == identity.namespace
+                and previous_contacts != (lead.phone, lead.email, lead.company)
+            )
+            if managed_binding and (created or authoritative_change or not lead.customer_kind):
+                # resolve_customer returns without clearing on no match. Clear
+                # only a proven automatic result; external/manual choices survive.
+                lead.counterparty_id, lead.customer_kind = None, ""
+                await resolve_customer(session, lead)
+            manifest = []
+            for item in receipt.files:
+                attachment = LeadAttachment(
+                    lead_id=lead.id, filename=item["filename"], content_type=item["content_type"],
+                    size_bytes=item["size_bytes"], storage_path=item["storage_path"],
+                    source="tender" if source == "tender" else "email" if source == "email" else "site",
+                )
+                session.add(attachment)
+                await session.flush()
+                manifest.append({**item, "attachment_id": attachment.id})
+            receipt.files = manifest
+            receipt.status, receipt.error_code = "delivered", None
+            receipt.delivered_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            receipt.updated_at = receipt.delivered_at
+            ctx.services.event_bus.emit(session, (
+                "leads.lead.received" if created else "leads.lead.intake_updated"
+            ), {
+                "lead_id": lead.id, "source": source, "entity_ref": f"lead:{lead.id}",
+                "receipt_id": receipt.id,
+                "customer_binding": {
+                    "managed": managed_binding,
+                    "counterparty_id": lead.counterparty_id,
+                    "customer_kind": lead.customer_kind,
+                },
+                **{key: data["lead"].get(key, "") for key in (
+                    "utm_source", "utm_medium", "utm_campaign", "landing_url",
+                )},
+            })
+            await session.flush()
+    except Exception as exc:
+        # Do not catch cancellation; DB/lead writes were rolled back to the
+        # savepoint. Expired ORM state must be explicitly reloaded after rollback.
+        receipt = await session.get(IntakeReceipt, receipt_id, populate_existing=True)
+        receipt.status = "failed"
+        receipt.error_code = (
+            "attachment_unavailable" if isinstance(exc, (OSError, intake_storage.AttachmentRejected))
+            else "processing_failed"
+        )
+        receipt.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        logger.warning("Intake receipt %s failed: %s", receipt_id, type(exc).__name__)
 
 
 async def on_deal_created_from_lead(payload: dict, ctx) -> None:
