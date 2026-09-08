@@ -1108,14 +1108,20 @@ async def download_attachment(
     # (тендерная заявка/письмо) — ASCII-фолбэк + RFC 5987 filename* для нормального имени.
     ascii_fallback = attachment.filename.encode("ascii", "ignore").decode("ascii") or "file"
     encoded_name = quote(attachment.filename)
+    headers = {
+        "Content-Disposition": (
+            f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_name}'
+        )
+    }
+    if attachment.content_type == "application/msword":
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_name}'
+        )
+        headers["X-Content-Type-Options"] = "nosniff"
     return Response(
         content=data,
         media_type=attachment.content_type,
-        headers={
-            "Content-Disposition": (
-                f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded_name}'
-            )
-        },
+        headers=headers,
     )
 
 
