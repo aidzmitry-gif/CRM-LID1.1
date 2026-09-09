@@ -373,6 +373,10 @@ async def _on_intake_receipt(receipt_id: str, ctx) -> None:
             source = {
                 "admin@enersys.by": "email", "zakupki.legat.by": "tender",
             }.get(identity.namespace, "site")
+            attachment_source = (
+                "email" if receipt.namespace == "admin@enersys.by"
+                and identity.namespace == "zakupki.legat.by" else source
+            )
             # Ordinary lead editors do not acquire the intake identity lock.
             # Refresh and lock their row before comparing our binding evidence.
             lead = await session.get(
@@ -411,7 +415,7 @@ async def _on_intake_receipt(receipt_id: str, ctx) -> None:
                 attachment = LeadAttachment(
                     lead_id=lead.id, filename=item["filename"], content_type=item["content_type"],
                     size_bytes=item["size_bytes"], storage_path=item["storage_path"],
-                    source="tender" if source == "tender" else "email" if source == "email" else "site",
+                    source=attachment_source,
                 )
                 session.add(attachment)
                 await session.flush()
