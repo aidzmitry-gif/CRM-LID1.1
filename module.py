@@ -16,6 +16,7 @@ from modules.leads.events import (
     on_campaign_launched,
     on_deal_created_from_lead,
     on_intake_lead,
+    on_intake_receipt_check,
 )
 from modules.leads.permissions import PERMISSIONS, ROLES
 
@@ -34,6 +35,7 @@ class LeadsModule(ModuleContract):
         core.subscribe("sales.deal.created", on_deal_created_from_lead)  # сделка → ссылка у лида
         core.subscribe("sales.call.logged", on_call_logged)  # входящий звонок неизвестного → лид
         core.subscribe("intake.lead.received", on_intake_lead)  # веб-форма/почта → лид
+        core.subscribe("intake.receipt.check", on_intake_receipt_check)  # read-only receipt query
         core.declare_permissions(PERMISSIONS)
         for role in ROLES:
             core.declare_role(role)
