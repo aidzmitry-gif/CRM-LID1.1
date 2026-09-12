@@ -18,10 +18,10 @@ from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from core.services.auth import require_permission
+from core.services.crm_owners import list_crm_owners, resolve_crm_owner
 from core.services.eventbus import EventContext
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import (
-    MANAGERS,
     REJECT_REASONS,
     apply_initial_score,
     cancel_pending_wake,
@@ -180,17 +180,21 @@ async def _resolve_manager(
 ) -> tuple[str, str, str]:
     """Выбрать менеджера, воронку и обоснование — вручную либо умной маршрутизацией (Цикл 8).
 
-    ``manual_manager`` должен совпадать с одним из известных ``MANAGERS``, иначе 422 (не
-    даём привязать лид к несуществующему/опечатанному имени). Авто-режим учитывает историю
+    ``manual_manager`` должен однозначно указать на активного сотрудника CRM, иначе 422.
+    Авто-режим учитывает историю
     конверсии менеджеров (``_manager_performance``): лид уходит лучшему закрывающему с
     поправкой на загрузку. Возвращает (менеджер, воронка, обоснование выбора для оператора).
     Общая логика для /route и /express (Цикл 2).
     """
     known = await known_customer(session, lead.company)
     if manual_manager:
-        if manual_manager not in {m["name"] for m in MANAGERS}:
-            raise HTTPException(status_code=422, detail=f"Неизвестный менеджер: {manual_manager}")
-        return manual_manager, choose_funnel(lead, known), f"Ручной выбор: {manual_manager}"
+        owner = await resolve_crm_owner(session, name=manual_manager)
+        return owner.full_name, choose_funnel(lead, known), f"Ручной выбор: {owner.full_name}"
+    owners = await list_crm_owners(session)
+    if not owners:
+        raise HTTPException(status_code=422, detail="Нет доступных активных менеджеров CRM")
+    # Local accounts have no confirmed product/region specializations.
+    managers = [{"name": owner.full_name, "regions": [], "products": []} for owner in owners]
     loads = await _manager_loads(session)
     perf = await _manager_performance(session)
     rates = {name: rate for name, (rate, _) in perf.items()}
@@ -201,7 +205,7 @@ async def _resolve_manager(
     volume = {name: assigned for name, (_, assigned) in perf.items()}
     balance = {**loads, **volume}
     key = is_key_lead(lead)  # ключевой лид → лучшему закрывающему без штрафа загрузки (Цикл 9)
-    manager, funnel = route_lead(lead, balance, known, rates, key=key)
+    manager, funnel = route_lead(lead, balance, known, rates, key=key, managers=managers)
     return manager, funnel, _route_rationale(manager, loads, rates, key)
 
 
@@ -216,7 +220,7 @@ def _route_rationale(
         return f"{pref}{manager}: конверсия {round(conv * 100)}%" if conv else f"{pref}{manager}"
     if conv:
         return f"{manager}: конверсия {round(conv * 100)}%, загрузка {load}"
-    return f"{manager}: по правилам (гео/продукт), загрузка {load}"
+    return f"{manager}: по загрузке, сейчас {load}"
 
 
 def _apply_route(
@@ -403,15 +407,16 @@ async def create_lead(
 
 @router.get("/managers", response_model=list[ManagerOut], dependencies=_READ)
 async def list_managers(session: AsyncSession = Depends(get_session)):
-    """Менеджеры для ручной раздачи: специализация (гео/продукт) + текущая загрузка.
+    """Активные менеджеры CRM для ручной раздачи + текущая загрузка.
 
     ДО ``/{lead_id}`` в файле нарочно — иначе FastAPI примет ``managers`` за
     ``lead_id`` (422 «не int») раньше, чем дойдёт до этого маршрута.
     """
     loads = await _manager_loads(session)
+    owners = await list_crm_owners(session)
     return [
-        ManagerOut(name=m["name"], regions=m["regions"], products=m["products"], load=loads.get(m["name"], 0))
-        for m in MANAGERS
+        ManagerOut(name=owner.full_name, regions=[], products=[], load=loads.get(owner.full_name, 0))
+        for owner in owners
     ]
 
 
@@ -798,7 +803,7 @@ async def express_lead(
 
     Допустим только из ``new``/``qualified`` (иначе 409, как в /route). Тело — как у
     /route (``assigned_to``/``next_step_at``/``next_step_note``, все опциональны):
-    ``assigned_to`` — ручной выбор менеджера с проверкой по ``MANAGERS`` (422 на
+    ``assigned_to`` — ручной выбор активного менеджера CRM (422 на
     неизвестного), без него — авто-правила (``route_lead``). Скоринг пересчитывается
     заново (как в /qualify); если вердикт оказался нецелевым — 422: экспресс не
     подменяет ручную квалификацию сомнительных лидов, только явно целевых.
@@ -893,7 +898,10 @@ async def convert_lead(
     получил ``deal_id`` (денежный путь L4: лид→сделка без «converted без сделки»).
     Требует предварительного распределения (иначе 409).
     """
-    lead = await session.get(Lead, lead_id)
+    lead = (await session.execute(
+        select(Lead).where(Lead.id == lead_id).with_for_update()
+        .execution_options(populate_existing=True)
+    )).scalar_one_or_none()
     if lead is None:
         raise HTTPException(status_code=404, detail="Лид не найден")
     if lead.status == "converted":
@@ -901,6 +909,7 @@ async def convert_lead(
     if lead.status != "routed":
         raise HTTPException(status_code=409, detail="Сначала распределите лид на менеджера")
 
+    owner = await resolve_crm_owner(session, name=lead.assigned_to, lock=True)
     lead.status = "converted"
     lead.converted_at = _utcnow()  # момент конвертации — для дневного план/факта (Цикл 5)
     # Позиции КП — в payload; sales.on_lead_converted переносит их в DealItem + amount.
@@ -931,7 +940,8 @@ async def convert_lead(
             # существующему клиенту, а не заводит дубль контрагента. Аддитивно — старый
             # подписчик поле игнорирует (шов MDM, §2.4). NULL, если лид остался холодным.
             "counterparty_id": lead.counterparty_id,
-            "owner": lead.assigned_to,
+            "owner": owner.full_name,
+            "owner_id": owner.employee_id,
             "priority": lead_priority(lead.score),
             "items": items,
             "entity_ref": f"lead:{lead.id}",

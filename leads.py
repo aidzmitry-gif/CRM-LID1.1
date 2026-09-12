@@ -135,6 +135,8 @@ def route_lead(
     known_customer: bool,
     performance: dict[str, float] | None = None,
     key: bool = False,
+    *,
+    managers: list[dict] | None = None,
 ) -> tuple[str, str]:
     """Назначить менеджера и воронку по правилам (география, продукт, нагрузка, тип).
 
@@ -155,7 +157,10 @@ def route_lead(
             return True
         return False
 
-    candidates = [m for m in MANAGERS if matches(m)] or MANAGERS
+    available = MANAGERS if managers is None else managers
+    if not available:
+        raise ValueError("Нет доступных менеджеров CRM")
+    candidates = [m for m in available if matches(m)] or available
     # есть история конверсии хотя бы у одного кандидата → умная маршрутизация к закрывающему;
     # иначе (холодный старт/нет данных) — прежний баланс по загрузке.
     if performance and any(performance.get(m["name"]) for m in candidates):
