@@ -17,6 +17,10 @@ class LeadCreate(BaseModel):
     нижний регистр) — грязный ввод из веб-форм/импорта не роняет вставку и не плодит
     «Ivan@x» / «ivan@x » как разные контакты в дедупе."""
 
+    owner_id: int | None = Field(default=None, gt=0)
+    crm_client_id: int | None = Field(default=None, gt=0)
+    crm_contact_id: int | None = Field(default=None, gt=0)
+    request_key: str | None = Field(default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     source: str = "site"  # site|telegram|whatsapp|email|phone|tender
     name: str = Field(default="", max_length=255)
     company: str = Field(default="", max_length=255)
@@ -59,6 +63,9 @@ class LeadOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    owner_id: int | None = None
+    crm_client_id: int | None = None
+    crm_contact_id: int | None = None
     id: int
     source: str
     name: str
@@ -179,8 +186,8 @@ class LeadItemIn(BaseModel):
     name: str = ""
     # Границы денег: количество строго > 0 (нулевая позиция бессмысленна), цена >= 0,
     # скидка 0..100% — иначе отрицательная цена/скидка исказила бы Σ КП в скорбордах денег.
-    qty: float = Field(default=1, gt=0)
-    price: float = Field(default=0, ge=0)
+    qty: float = Field(default=1, gt=0, allow_inf_nan=False)
+    price: float = Field(default=0, ge=0, allow_inf_nan=False)
     discount_pct: float = Field(default=0, ge=0, le=100)
 
 
@@ -218,6 +225,7 @@ class RouteIn(BaseModel):
     Без тела (или пустой ``assigned_to``) — прежнее поведение: авто-правила.
     """
 
+    owner_id: int | None = Field(default=None, gt=0)
     assigned_to: str | None = None
     next_step_at: datetime | None = None
     next_step_note: str | None = None

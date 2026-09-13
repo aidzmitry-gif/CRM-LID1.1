@@ -18,8 +18,10 @@ from core.domain.models import Counterparty
 from core.runtime.core import Core
 from core.runtime.deps import get_core, get_session
 from core.services.auth import require_permission
+from core.services.crm_access import CrmAccess, get_crm_access
 from core.services.crm_owners import list_crm_owners, resolve_crm_owner
 from core.services.eventbus import EventContext
+from modules.leads.access import deny_unscoped_own_routes, scope_leads, visible_lead
 from modules.leads.ai import qualify_lead
 from modules.leads.leads import (
     REJECT_REASONS,
@@ -38,6 +40,7 @@ from modules.leads.leads import (
     working_minutes_between,
 )
 from modules.leads.models import Lead, LeadAttachment, LeadItem, LeadPlan
+from modules.leads.own import create_linked_lead, resolve_link
 from modules.leads.schemas import (
     AttemptIn,
     LeadAttachmentIn,
@@ -69,7 +72,7 @@ from modules.leads.storage import (
     save_attachment,
 )
 
-router = APIRouter(tags=["leads"])
+router = APIRouter(tags=["leads"], dependencies=[Depends(deny_unscoped_own_routes)])
 
 # RBAC (SECURITY.md, fail-closed через core.services.auth): доступ к вводу воронки —
 # только сотрудникам с правом, а не анониму/чужому отделу (ПДн клиентов, конвертация,
@@ -130,7 +133,7 @@ async def _compute_score(lead: Lead, session: AsyncSession) -> tuple[int, str, s
     ``qualified`` без коммита, но видимым в той же сессии (тестовый клиент делит
     сессию между запросами внутри теста).
     """
-    known = await known_customer(session, lead.company)
+    known = True if lead.crm_client_id is not None else await known_customer(session, lead.company)
     return score_lead(lead, known)
 
 
@@ -186,7 +189,7 @@ async def _resolve_manager(
     поправкой на загрузку. Возвращает (менеджер, воронка, обоснование выбора для оператора).
     Общая логика для /route и /express (Цикл 2).
     """
-    known = await known_customer(session, lead.company)
+    known = True if lead.crm_client_id is not None else await known_customer(session, lead.company)
     if manual_manager:
         owner = await resolve_crm_owner(session, name=manual_manager)
         return owner.full_name, choose_funnel(lead, known), f"Ручной выбор: {owner.full_name}"
@@ -325,6 +328,7 @@ async def _wake_due_snoozed(session: AsyncSession) -> None:
     woke = (
         await session.execute(
             select(Lead).where(
+                Lead.owner_id.is_(None),
                 Lead.status == "rejected",
                 Lead.reject_reason == "не сейчас",
                 Lead.snooze_until.isnot(None),
@@ -343,14 +347,17 @@ async def _wake_due_snoozed(session: AsyncSession) -> None:
 
 
 @router.get("", response_model=list[LeadOut], dependencies=_READ)
-async def list_leads(status: str = "", session: AsyncSession = Depends(get_session)):
+async def list_leads(response: Response, status: str = "", session: AsyncSession = Depends(get_session),
+                     access: CrmAccess = Depends(get_crm_access)):
     """Приём лидов: входящие заявки воронки (новые — первыми; опц. фильтр по статусу).
 
     Цикл 16 — wake-on-read (``_wake_due_snoozed``): отложенные «не сейчас» с наступившим
     сроком возвращаются в ``new`` прямо при чтении доски.
     """
-    await _wake_due_snoozed(session)
-    query = select(Lead).order_by(Lead.id.desc())
+    response.headers["X-CRM-Visibility"] = access.visibility
+    if not access.own_only:
+        await _wake_due_snoozed(session)
+    query = scope_leads(select(Lead).order_by(Lead.id.desc()), access)
     if status:
         query = query.where(Lead.status == status)
     leads = list((await session.execute(query)).scalars().all())
@@ -362,6 +369,7 @@ async def create_lead(
     payload: LeadCreate,
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
+    access: CrmAccess = Depends(get_crm_access),
 ):
     """Принять лид из канала (сайт/мессенджер/e-mail/телефония/тендер) → событие в шину.
 
@@ -369,6 +377,10 @@ async def create_lead(
     вместо создания дубля (ручной интейк лидорубом, в отличие от веб-формы/почты
     не дописывает обращение автоматически — оператор решает сам, открыв дубль).
     """
+    if access.own_only or payload.crm_client_id is not None or payload.owner_id is not None:
+        return await create_linked_lead(payload, core, session, access)
+    if payload.crm_contact_id is not None or payload.request_key is not None:
+        raise HTTPException(422, "Для числовой связи нужен CRM-клиент")
     dup = await find_open_lead_by_phone(session, payload.phone, payload.company)
     if dup is None:
         dup = await find_open_lead_by_email(session, payload.email, payload.company)
@@ -638,12 +650,12 @@ async def set_plan(payload: LeadPlanIn, session: AsyncSession = Depends(get_sess
 
 
 @router.get("/{lead_id}", response_model=LeadOut, dependencies=_READ)
-async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session)):
+async def get_lead(lead_id: int, session: AsyncSession = Depends(get_session),
+                   access: CrmAccess = Depends(get_crm_access)):
     """Один лид по id (кокпит/точечный fetch). Тоже будит созревшие «не сейчас» (wake-on-read)."""
-    await _wake_due_snoozed(session)
-    lead = await session.get(Lead, lead_id)
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Лид не найден")
+    if not access.own_only:
+        await _wake_due_snoozed(session)
+    lead = await visible_lead(session, lead_id, access)
     (await _attach_item_totals(session, [lead]))
     return lead
 
@@ -653,6 +665,7 @@ async def qualify(
     lead_id: int,
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
+    access: CrmAccess = Depends(get_crm_access),
 ):
     """Квалифицировать лид (Lead Qualifier): балл + вердикт целевой/нецелевой.
 
@@ -661,10 +674,10 @@ async def qualify(
     (→ audit, §3.3); без AI — событие ``leads.lead.qualified``. Под-фича за
     feature-flag, без переписывания механики (§2.5).
     """
-    lead = await session.get(Lead, lead_id)
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Лид не найден")
+    lead = await visible_lead(session, lead_id, access, lock=True)
 
+    if access.own_only and lead.status in {"converted", "rejected"}:
+        raise HTTPException(409, "Лид в терминальном статусе")
     score, verdict, reason = await _compute_score(lead, session)
     _apply_score(lead, score, verdict, reason)
     rationale, model = await _emit_qualified(lead, score, verdict, core, session)
@@ -753,6 +766,7 @@ async def route(
     payload: RouteIn | None = Body(default=None),
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
+    access: CrmAccess = Depends(get_crm_access),
 ):
     """Распределить лид на менеджера — по правилам или вручную.
 
@@ -769,16 +783,32 @@ async def route(
     Публикует ``leads.lead.routed`` (то же событие в обоих режимах, + флаг
     ``manual`` для аудита). Уже сконвертированный лид — 409.
     """
-    lead = await session.get(Lead, lead_id)
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Лид не найден")
+    lead = await visible_lead(session, lead_id, access, lock=True)
     if lead.status == "converted":
         raise HTTPException(status_code=409, detail="Лид уже сконвертирован в сделку")
     if lead.status == "rejected":
         raise HTTPException(status_code=409, detail="Лид отклонён — раздача недоступна")
 
     manual_manager = (payload.assigned_to or "").strip() if payload else ""
-    manager, funnel, rationale = await _resolve_manager(lead, session, manual_manager)
+    if lead.crm_client_id is not None:
+        if access.own_only and payload and payload.owner_id not in (None, access.employee_id):
+            raise HTTPException(403, "Нельзя назначить чужого владельца лида")
+        owner = await resolve_crm_owner(session, employee_id=lead.owner_id, lock=True)
+        if payload and payload.owner_id not in (None, owner.employee_id):
+            raise HTTPException(422, "Сначала согласуйте владельца CRM-клиента")
+        if manual_manager and manual_manager != owner.full_name:
+            raise HTTPException(422, "Имя не соответствует числовому владельцу")
+        await resolve_link(core, session, lead, access)
+        if lead.status != "qualified":
+            raise HTTPException(409, "Сначала квалифицируйте лид")
+        manager, funnel, rationale = owner.full_name, choose_funnel(lead, True), "Назначен числовой владелец CRM-клиента"
+    else:
+        manager, funnel, rationale = await _resolve_manager(lead, session, manual_manager)
+    if lead.crm_client_id is not None and payload:
+        if payload.next_step_note is not None and len(payload.next_step_note) > 128:
+            raise HTTPException(422, "Следующий шаг: не более 128 символов")
+        if payload.next_step_at is not None and payload.next_step_at.tzinfo is not None:
+            payload.next_step_at = payload.next_step_at.astimezone(timezone.utc).replace(tzinfo=None)
     _apply_route(
         lead, manager, funnel,
         payload.next_step_at if payload else None,
@@ -887,6 +917,7 @@ async def convert_lead(
     lead_id: int,
     core: Core = Depends(get_core),
     session: AsyncSession = Depends(get_session),
+    access: CrmAccess = Depends(get_crm_access),
 ):
     """Конвертировать распределённый лид — публикует ``leads.lead.converted``.
 
@@ -898,18 +929,22 @@ async def convert_lead(
     получил ``deal_id`` (денежный путь L4: лид→сделка без «converted без сделки»).
     Требует предварительного распределения (иначе 409).
     """
-    lead = (await session.execute(
-        select(Lead).where(Lead.id == lead_id).with_for_update()
-        .execution_options(populate_existing=True)
-    )).scalar_one_or_none()
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Лид не найден")
+    lead = await visible_lead(session, lead_id, access, lock=True)
+    if lead.status == "converted" and access.own_only:
+        await session.commit()
+        return LeadConvertOut(lead_id=lead.id, status=lead.status, deal_id=lead.deal_id)
     if lead.status == "converted":
         raise HTTPException(status_code=409, detail="Лид уже сконвертирован в сделку")
     if lead.status != "routed":
         raise HTTPException(status_code=409, detail="Сначала распределите лид на менеджера")
 
-    owner = await resolve_crm_owner(session, name=lead.assigned_to, lock=True)
+    if lead.crm_client_id is not None:
+        owner = await resolve_crm_owner(session, employee_id=lead.owner_id, lock=True)
+        await resolve_link(core, session, lead, access)
+        if len(lead.next_step_note or "") > 128:
+            raise HTTPException(422, "Следующий шаг: не более 128 символов")
+    else:
+        owner = await resolve_crm_owner(session, name=lead.assigned_to, lock=True)
     lead.status = "converted"
     lead.converted_at = _utcnow()  # момент конвертации — для дневного план/факта (Цикл 5)
     # Позиции КП — в payload; sales.on_lead_converted переносит их в DealItem + amount.
@@ -940,6 +975,12 @@ async def convert_lead(
             # существующему клиенту, а не заводит дубль контрагента. Аддитивно — старый
             # подписчик поле игнорирует (шов MDM, §2.4). NULL, если лид остался холодным.
             "counterparty_id": lead.counterparty_id,
+            "crm_client_id": lead.crm_client_id,
+            "crm_contact_id": lead.crm_contact_id,
+            "crm_link_version": 1 if lead.crm_client_id is not None else None,
+            "next_step": lead.next_step_note if lead.crm_client_id is not None else None,
+            "next_step_at": lead.next_step_at.isoformat() if lead.crm_client_id is not None and lead.next_step_at else None,
+            "funnel": "new_clients",
             "owner": owner.full_name,
             "owner_id": owner.employee_id,
             "priority": lead_priority(lead.score),
@@ -951,7 +992,8 @@ async def convert_lead(
     # Синхронный relay: converted → Deal → deal.created → lead.deal_id (обычно 2 тика).
     ctx = EventContext(session, core.services)
     for _ in range(5):
-        n = await core.event_bus.relay_once(session, ctx)
+        n = await core.event_bus.relay_once(session, ctx,
+            event_types={"leads.lead.converted", "sales.deal.created"} if access.own_only else None)
         await session.refresh(lead)
         if lead.deal_id is not None:
             break
@@ -997,8 +1039,11 @@ async def upload_attachment(
 
 
 @router.get("/{lead_id}/items", response_model=list[LeadItemOut], dependencies=_READ)
-async def list_items(lead_id: int, session: AsyncSession = Depends(get_session)):
+async def list_items(lead_id: int, session: AsyncSession = Depends(get_session),
+                     access: CrmAccess = Depends(get_crm_access)):
     """Позиции подобранного КП лида (корзина каталог-пикера)."""
+    if access.own_only:
+        await visible_lead(session, lead_id, access)
     query = select(LeadItem).where(LeadItem.lead_id == lead_id).order_by(LeadItem.id)
     return (await session.execute(query)).scalars().all()
 
@@ -1008,18 +1053,39 @@ async def replace_items(
     lead_id: int,
     payload: list[LeadItemIn],
     session: AsyncSession = Depends(get_session),
+    access: CrmAccess = Depends(get_crm_access),
 ):
     """Заменить весь подбор товара лида (replace-all: удалить старые, записать новые).
 
     Полный список позиций проще всего синхронизировать с корзиной пикера целиком.
     Уже сконвертированный/отклонённый лид — 409 (подбор править нельзя: сделка/счёт
     уже живут своей жизнью, терминальный лид не редактируем)."""
-    lead = await session.get(Lead, lead_id)
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Лид не найден")
+    lead = await visible_lead(session, lead_id, access, lock=True)
     if lead.status in ("converted", "rejected"):
         raise HTTPException(status_code=409, detail=f"Лид в терминальном статусе: {lead.status}")
 
+    if lead.crm_client_id is not None:
+        from decimal import ROUND_HALF_UP, Decimal
+
+        from core.domain.models import Sku
+        if any("price" not in it.model_fields_set for it in payload):
+            raise HTTPException(422, "Укажите подтверждённую цену каждой позиции")
+        skus = {sku.id: sku for sku in (await session.scalars(select(Sku).where(Sku.id.in_([it.sku_id for it in payload])))).all()}
+        if any(it.sku_id not in skus for it in payload):
+            raise HTTPException(422, "Товар не найден")
+        amount = Decimal("0")
+        for it in payload:
+            if it.qty >= 1e12 or it.price >= 1e12:
+                raise HTTPException(422, "Количество или цена вне допустимого диапазона")
+            qty = Decimal(str(it.qty)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            price = Decimal(str(it.price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if qty <= 0 or qty >= Decimal("1000000000000") or price >= Decimal("1000000000000"):
+                raise HTTPException(422, "Количество или цена вне допустимого диапазона")
+            amount += (qty * price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if amount >= Decimal("1000000000000"):
+                raise HTTPException(422, "Сумма позиций вне допустимого диапазона")
+            it.qty, it.price = float(qty), float(price)
+            it.sku_code, it.name = skus[it.sku_id].code, skus[it.sku_id].title
     await session.execute(delete(LeadItem).where(LeadItem.lead_id == lead_id))
     rows = [
         LeadItem(

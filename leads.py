@@ -252,7 +252,7 @@ async def find_last_rejected_by_contact(
         return None
     cands = (
         await session.execute(
-            select(Lead).where(Lead.status == "rejected", or_(*conds)).order_by(Lead.id.desc())
+            select(Lead).where(Lead.owner_id.is_(None), Lead.status == "rejected", or_(*conds)).order_by(Lead.id.desc())
         )
     ).scalars().all()
     return next((c for c in cands if not companies_conflict(c.company, company)), None)
@@ -382,7 +382,7 @@ async def find_open_lead_by_phone(
     cands = (
         await session.execute(
             select(Lead)
-            .where(
+            .where(Lead.owner_id.is_(None),
                 Lead.phone.isnot(None),
                 Lead.phone.like(f"%{tail}"),
                 Lead.status.in_(OPEN_STATUSES),
@@ -406,7 +406,7 @@ async def find_open_lead_by_email(
     cands = (
         await session.execute(
             select(Lead)
-            .where(
+            .where(Lead.owner_id.is_(None),
                 Lead.email.isnot(None),
                 # точное сравнение, НЕ ilike: в LIKE-паттерне `_`/`%` — wildcard'ы,
                 # а `_` в адресах сплошь и рядом (ivan_petrov@) → ложные дубли

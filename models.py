@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db.base import Base
@@ -94,9 +94,14 @@ class Lead(Base):
     """
 
     __tablename__ = "lead"
-    __table_args__ = {"schema": "leads"}
+    __table_args__ = (UniqueConstraint("owner_id", "request_key", name="uq_lead_owner_request"), {"schema": "leads"})
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(index=True)
+    crm_client_id: Mapped[int | None] = mapped_column(index=True)
+    crm_contact_id: Mapped[int | None] = mapped_column(index=True)
+    request_key: Mapped[str | None] = mapped_column(String(64))
+    request_hash: Mapped[str | None] = mapped_column(String(64))
     source: Mapped[str] = mapped_column(String(16), default="site", server_default="site")
     name: Mapped[str] = mapped_column(String(255), default="", server_default="")
     company: Mapped[str] = mapped_column(String(255), default="", server_default="")

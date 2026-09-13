@@ -99,7 +99,7 @@ async def on_call_logged(payload: dict, ctx) -> None:
         # не гадаем и не пишем «не тому» (тихий no-op, как до Цикла 15).
         same_tail = (
             await ctx.session.execute(
-                select(Lead).where(
+                select(Lead).where(Lead.owner_id.is_(None),
                     Lead.status.in_(("new", "qualified", "routed")),
                     Lead.phone.isnot(None),
                     Lead.phone.like(f"%{tail}"),
@@ -465,9 +465,13 @@ async def on_deal_created_from_lead(payload: dict, ctx) -> None:
     deal_id = payload.get("deal_id")
     if not lead_id or not deal_id:
         return
-    from modules.leads.models import Lead
+    from sqlalchemy import select
 
-    lead = await ctx.session.get(Lead, lead_id)
+    from modules.leads.models import Lead
+    lead = (await ctx.session.execute(select(Lead).where(Lead.id == lead_id)
+        .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
     if lead is not None:
+        if lead.crm_client_id is not None and lead.deal_id not in (None, deal_id):
+            raise ValueError("Conflicting CRM lead conversion backlink")
         lead.deal_id = deal_id
         logger.info("Leads: лид %s связан со сделкой %s", lead_id, deal_id)
